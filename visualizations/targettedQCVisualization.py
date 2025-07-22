@@ -12,6 +12,21 @@ import plotly.express as px
 # The configuration (level, handler) should be set in the main app
 logger = logging.getLogger(__name__)
 
+# pro_visualize/qc/targeted_qc.py
+
+import pandas as pd
+import re
+import logging
+from pathlib import Path
+from typing import Dict, Optional, Any
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+
+# Set up a logger for this module
+# The configuration (level, handler) should be set in the main app
+logger = logging.getLogger(__name__)
+
 class TargetedQcVisualizer:
     """
     Handles QC data loading, processing, and visualization for targeted proteomics.
@@ -531,3 +546,142 @@ class TargetedQcVisualizer:
         
         logger.info("Successfully generated RT distribution plot.")
         return fig
+
+    def plot_cv_distributions(
+        self,
+        area_cv_threshold: float = 20.0,
+        rt_cv_threshold: float = 2.0,
+        plot_config: Optional[Dict[str, Any]] = None
+    ) -> go.Figure:
+        """
+        Generates histograms of the Area and RT Coefficient of Variation (CV).
+
+        This plot provides an experiment-wide overview of reproducibility for
+        both peak area and retention time.
+
+        Args:
+            area_cv_threshold (float): A QC threshold line for the Area CV plot.
+                                       Defaults to 20.0 (i.e., 20%).
+            rt_cv_threshold (float): A QC threshold line for the RT CV plot.
+                                     Defaults to 2.0 (i.e., 2%).
+            plot_config (Optional[Dict, Any]]): A dictionary to override
+                default plot styling.
+
+        Returns:
+            go.Figure: A Plotly figure object with two subplots.
+        """
+        # 1. Get default config and update with user's config
+        config = self._create_default_plot_config()
+        if plot_config:
+            config.update(plot_config)
+            
+        # 2. Get the peptide statistics
+        try:
+            stats_df = self.calculate_peptide_stats()
+        except (KeyError, RuntimeError) as e:
+            logger.error(f"Failed to get stats for CV plot: {e}")
+            fig = go.Figure()
+            fig.update_layout(title="Error Preparing Data")
+            return fig
+            
+        logger.info("Generating CV distribution histograms.")
+
+        # 3. Create a figure with two subplots
+        fig = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=("Area CV Distribution", "RT CV Distribution")
+        )
+
+        # 4. Add the Area CV histogram to the first subplot
+        fig.add_trace(go.Histogram(
+            x=stats_df['Area_CV'],
+            name='Area CV',
+            marker_color=config['color_discrete_sequence'][0],
+            nbinsx=30
+        ), row=1, col=1)
+
+        # 5. Add the RT CV histogram to the second subplot
+        fig.add_trace(go.Histogram(
+            x=stats_df['RT_CV'],
+            name='RT CV',
+            marker_color=config['color_discrete_sequence'][1],
+            nbinsx=30
+        ), row=1, col=2)
+
+        # 6. Add vertical lines for QC thresholds
+        fig.add_vline(
+            x=area_cv_threshold, line_width=2, line_dash="dash", line_color="red",
+            annotation_text=f"Threshold: {area_cv_threshold}%",
+            annotation_position="top right",
+            row=1, col=1
+        )
+        fig.add_vline(
+            x=rt_cv_threshold, line_width=2, line_dash="dash", line_color="red",
+            annotation_text=f"Threshold: {rt_cv_threshold}%",
+            annotation_position="top right",
+            row=1, col=2
+        )
+
+        # 7. Update layout
+        fig.update_layout(
+            title_text='Peptide Measurement Reproducibility',
+            template=config['template'],
+            font=dict(family=config['font_family'], size=config['font_size']),
+            showlegend=False
+        )
+        fig.update_xaxes(title_text="CV (%)", row=1, col=1)
+        fig.update_xaxes(title_text="CV (%)", row=1, col=2)
+        fig.update_yaxes(title_text="Number of Peptides", row=1, col=1)
+        
+        logger.info("Successfully generated CV distribution plot.")
+        return fig
+
+    def get_failing_peptides(
+        self,
+        area_cv_threshold: float = 20.0,
+        rt_cv_threshold: float = 2.0
+    ) -> pd.DataFrame:
+        """
+        Returns a DataFrame of peptides that fail the specified CV thresholds.
+
+        This method provides a detailed list of peptides that do not meet the
+        reproducibility criteria, complementing the CV distribution plots.
+
+        Args:
+            area_cv_threshold (float): The QC threshold for Area CV (%).
+            rt_cv_threshold (float): The QC threshold for RT CV (%).
+
+        Returns:
+            pd.DataFrame: A table of peptides exceeding one or both thresholds.
+        """
+        logger.info(f"Filtering for peptides with Area CV > {area_cv_threshold}% or RT CV > {rt_cv_threshold}%.")
+        
+        # 1. Get the full statistics table
+        stats_df = self.calculate_peptide_stats()
+
+        # 2. Identify peptides failing each threshold
+        fails_area = stats_df['Area_CV'] > area_cv_threshold
+        fails_rt = stats_df['RT_CV'] > rt_cv_threshold
+
+        # 3. Filter for peptides that fail at least one of the conditions
+        failing_df = stats_df[fails_area | fails_rt].copy()
+
+        # 4. Add a 'Reason' column for clarity
+        reasons = []
+        for index, row in failing_df.iterrows():
+            reason_parts = []
+            if row['Area_CV'] > area_cv_threshold:
+                reason_parts.append("High Area CV")
+            if row['RT_CV'] > rt_cv_threshold:
+                reason_parts.append("High RT CV")
+            reasons.append(" & ".join(reason_parts))
+        
+        failing_df['Reason'] = reasons
+        
+        if failing_df.empty:
+            logger.info("No peptides failed the specified QC thresholds. Great!")
+        else:
+            logger.warning(f"Found {len(failing_df)} peptides failing QC thresholds.")
+            
+        return failing_df
+    
