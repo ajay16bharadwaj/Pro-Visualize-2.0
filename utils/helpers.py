@@ -1,5 +1,8 @@
 import logging
 from functools import wraps
+import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 # --- Decorator for Robust Plotting ---
 def handle_plotting_errors(plot_function):
