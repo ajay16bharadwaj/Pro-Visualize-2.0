@@ -23,6 +23,7 @@ st.markdown("A scalable application for multi-omics analysis, starting with targ
 tab_welcome, tab_qc, tab_quant, tab_comp = st.tabs([
     "👋 Welcome",
     "📊 QC Analysis", 
+    "📈 Dilution Series",
     "📈 Quantification", 
     "🆚 Comparative Analysis"
 ])
@@ -42,6 +43,11 @@ with tab_qc:
     # The render_qc function now builds the entire UI for the QC section,
     # including its own internal tabs for DIA and Targeted QC.
     render_qc()
+
+with tab_dilution:
+    st.header("Dilution Series Analysis")
+    st.info("This section is currently under development. 🏗️")
+    # Future: Call render_dilution()
 
 with tab_quant:
     st.header("Protein Quantification")
