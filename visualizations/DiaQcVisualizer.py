@@ -295,6 +295,11 @@ class DiaQcVisualizer:
 
         if validation_df.empty:
             raise ValueError("No data found for the selected sentinel peptides.")
+
+        # --- THE FIX ---
+        # Explicitly sort the DataFrame by injection order before plotting.
+        # This ensures the lines are drawn chronologically.
+        validation_df = validation_df.sort_values('Injection_Order')
             
         validation_df['RT_normalized'] = validation_df['RT'] - validation_df.groupby('Precursor.Id')['RT'].transform('mean')
 
@@ -302,7 +307,8 @@ class DiaQcVisualizer:
             validation_df, x='Injection_Order', y='RT_normalized', color='Precursor.Id',
             title='Systematic Retention Time Drift of Sentinel Peptides',
             labels={'Injection_Order': 'Injection Order', 'RT_normalized': 'RT Deviation from Mean (min)'},
-            markers=True, hover_data={'RT': ':.2f'}
+            markers=True, hover_data={'RT': ':.2f'},
+            color_discrete_sequence=px.colors.qualitative.Alphabet
         )
         fig.add_hline(y=0, line_width=2, line_dash="dash", line_color="black")
         fig.update_layout(title_x=0.5)
@@ -318,16 +324,62 @@ class DiaQcVisualizer:
         )
         fig.update_layout(title_x=0.5)
         return fig
+    
+    def plot_peptide_elution_distribution(self, q_value_cutoff: float, num_bins: int):
+        """
+        Generates a histogram showing the distribution of unique peptide elutions over RT.
+
+        Args:
+            q_value_cutoff (float): The Q-value threshold for including precursors.
+            num_bins (int): The number of bins to use for the histogram.
+
+        Returns:
+            A Plotly histogram figure object.
+        """
+        df = self._filter_by_q_value(q_value_cutoff)
+        
+        # Get a representative distribution using only unique precursors
+        unique_precursors_df = df.drop_duplicates(subset=['Precursor.Id'])
+
+        if unique_precursors_df.empty:
+            raise ValueError("No unique precursors found after filtering.")
+
+        fig = px.histogram(
+            unique_precursors_df,
+            x='RT',
+            nbins=num_bins,
+            title='Distribution of Peptide Elutions over Retention Time',
+            labels={'RT': 'Retention Time (min)'}
+        )
+
+        fig.update_layout(
+            title_x=0.5,
+            bargap=0.1,
+            yaxis_title="Number of Unique Peptides"
+        )
+        return fig
+    
 
     def plot_rt_prediction_error(self, q_value_cutoff: float, moving_avg_window: int):
-        """Plots the moving average of the RT prediction error."""
+        """Plots the moving average of the RT prediction error with a symmetrical y-axis."""
         df = self._filter_by_q_value(q_value_cutoff)
+        
+        if 'Predicted.RT' not in df.columns:
+            raise KeyError("Data is missing 'Predicted.RT' column required for this plot.")
+            
         df['RT_Prediction_Error'] = df['RT'] - df['Predicted.RT']
         
         run_error_df = df.groupby('Injection_Order')['RT_Prediction_Error'].median().reset_index()
         run_error_df['Error_Rolling_Avg'] = run_error_df['RT_Prediction_Error'].rolling(
             window=moving_avg_window, center=True, min_periods=1
         ).mean()
+
+        # --- THE FIX ---
+        # 1. Find the maximum absolute error to set a symmetrical scale.
+        max_abs_error = run_error_df['Error_Rolling_Avg'].abs().max()
+        
+        # 2. Add a 10% buffer so points aren't on the edge of the plot.
+        y_range_limit = max_abs_error * 1.1 if max_abs_error > 0 else 1.0
 
         fig = px.line(
             run_error_df.sort_values('Injection_Order'), x='Injection_Order', y='Error_Rolling_Avg',
@@ -336,6 +388,109 @@ class DiaQcVisualizer:
             markers=True
         )
         fig.add_hline(y=0, line_width=2, line_dash="dash", line_color="black")
+        
+        # 3. Apply the new symmetrical y-axis range to the layout.
+        fig.update_layout(
+            title_x=0.5,
+            yaxis_range=[-y_range_limit, y_range_limit]
+        )
+        return fig
+    
+    def plot_im_drift(self, sentinel_peptides: List[str], q_value_cutoff: float):
+        """Plots the normalized Ion Mobility (IM) drift for a list of sentinel peptides."""
+        df = self._filter_by_q_value(q_value_cutoff)
+        
+        if 'IM' not in df.columns:
+            raise KeyError("Data is missing 'IM' column required for this plot.")
+            
+        validation_df = df[df['Precursor.Id'].isin(sentinel_peptides)].copy()
+
+        if validation_df.empty:
+            raise ValueError("No data found for the selected sentinel peptides.")
+        
+        # Sort chronologically to ensure lines are drawn correctly
+        validation_df = validation_df.sort_values('Injection_Order')
+            
+        # Normalize the IM for each peptide to compare trends
+        validation_df['IM_normalized'] = validation_df['IM'] - validation_df.groupby('Precursor.Id')['IM'].transform('mean')
+
+        fig = px.line(
+            validation_df, x='Injection_Order', y='IM_normalized', color='Precursor.Id',
+            title='Systematic Ion Mobility Shift of Sentinel Peptides',
+            labels={'Injection_Order': 'Injection Order', 'IM_normalized': 'IM Deviation from Mean (1/K0)'},
+            markers=True,
+            color_discrete_sequence=px.colors.qualitative.Alphabet
+        )
+        fig.add_hline(y=0, line_width=2, line_dash="dash", line_color="black")
         fig.update_layout(title_x=0.5)
         return fig
+    
+    def plot_mass_accuracy_distribution(self, q_value_cutoff: float, y_range: list):
+        """Creates a boxplot of mass accuracy (Mass.Evidence) by acquisition date."""
+        df = self._filter_by_q_value(q_value_cutoff)
+        
+        if 'Mass.Evidence' not in df.columns:
+            raise KeyError("Data is missing 'Mass.Evidence' column required for this plot.")
+
+        fig = px.box(
+            df.sort_values('Acquisition_Date'),
+            x='Acquisition_Date',
+            y='Mass.Evidence',
+            title='Mass Accuracy Distribution by Acquisition Date',
+            labels={'Acquisition_Date': 'Acquisition Date', 'Mass.Evidence': 'Mass Error (ppm)'}
+        )
+        fig.add_hline(y=0, line_width=2, line_dash="dash", line_color="black")
+        # Set y-axis range dynamically based on user input
+        fig.update_yaxes(range=y_range)
+        fig.update_layout(title_x=0.5)
+        return fig
+
+    def plot_sentinel_mass_accuracy(self, sentinel_peptides: List[str], q_value_cutoff: float):
+        """Plots the mass accuracy for a list of sentinel peptides over time."""
+        df = self._filter_by_q_value(q_value_cutoff)
+        
+        if 'Mass.Evidence' not in df.columns:
+            raise KeyError("Data is missing 'Mass.Evidence' column required for this plot.")
+            
+        validation_df = df[df['Precursor.Id'].isin(sentinel_peptides)].copy()
+
+        if validation_df.empty:
+            raise ValueError("No data found for the selected sentinel peptides.")
+            
+        fig = px.line(
+            validation_df.sort_values('Injection_Order'), 
+            x='Injection_Order', y='Mass.Evidence', color='Precursor.Id',
+            title='Mass Accuracy for Sentinel Peptides over Time',
+            labels={'Injection_Order': 'Injection Order', 'Mass.Evidence': 'Mass Error (ppm)'},
+            markers=True,
+            color_discrete_sequence=px.colors.qualitative.Alphabet
+        )
+        fig.add_hline(y=0, line_width=2, line_dash="dash", line_color="black")
+        fig.update_layout(title_x=0.5)
+        return fig
+
+    def plot_mass_error_trend(self, q_value_cutoff: float, moving_avg_window: int):
+        """Plots the smoothed, rolling average of the median mass error per run."""
+        df = self._filter_by_q_value(q_value_cutoff)
+        
+        if 'Mass.Evidence' not in df.columns:
+            raise KeyError("Data is missing 'Mass.Evidence' column required for this plot.")
+            
+        run_mass_error = df.groupby('Injection_Order')['Mass.Evidence'].median().reset_index()
+        run_mass_error['Error_Rolling_Avg'] = run_mass_error['Mass.Evidence'].rolling(
+            window=moving_avg_window, center=True, min_periods=1
+        ).mean()
+
+        fig = px.line(
+            run_mass_error.sort_values('Injection_Order'),
+            x='Injection_Order', y='Error_Rolling_Avg',
+            title=f'Mass Error Trend ({moving_avg_window}-Run Rolling Average)',
+            labels={'Injection_Order': 'Injection Order', 'Error_Rolling_Avg': 'Median Mass Error (ppm)'},
+            markers=True
+        )
+        fig.add_hline(y=0, line_width=2, line_dash="dash", line_color="black")
+        fig.update_layout(title_x=0.5)
+        return fig
+
+    
     

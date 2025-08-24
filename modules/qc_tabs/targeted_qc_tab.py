@@ -5,6 +5,7 @@ from tempfile import NamedTemporaryFile
 import pandas as pd
 from utils.helpers import handle_plotting_errors
 from visualizations.targettedQCVisualization import TargetedQcVisualizer
+from utils.caching import load_targeted_visualizer
 
 # Set up a logger for this module
 
@@ -38,7 +39,8 @@ class TargetedQcTab:
                     
                     try:
                         with st.spinner("Processing Targeted QC report..."):
-                            st.session_state.targeted_qc_visualizer = TargetedQcVisualizer(filepath=temp_path)
+                            #st.session_state.targeted_qc_visualizer = TargetedQcVisualizer(filepath=temp_path)
+                            st.session_state.targeted_qc_visualizer = load_targeted_visualizer(temp_path)
                         st.success("Targeted QC report loaded successfully!")
                         st.rerun()
                     except (FileNotFoundError, ValueError, KeyError, RuntimeError) as e:

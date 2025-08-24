@@ -3,6 +3,8 @@ import logging
 from tempfile import NamedTemporaryFile
 from visualizations.DiaQcVisualizer import DiaQcVisualizer
 from utils.helpers import handle_plotting_errors
+from utils.caching import load_dia_visualizer
+
 
 # Set up a logger for this module
 logger = logging.getLogger(__name__)
@@ -19,6 +21,7 @@ class DiaQcTab:
             st.session_state.dia_qc_visualizer = None
         if 'dia_metadata_confirmed' not in st.session_state:
             st.session_state.dia_metadata_confirmed = False
+
 
     def _upload_data_section(self):
         """Handles the file uploader and instantiation of the visualizer."""
@@ -40,7 +43,8 @@ class DiaQcTab:
                     
                     try:
                         with st.spinner("Processing DIA-NN report..."):
-                            st.session_state.dia_qc_visualizer = DiaQcVisualizer(filepath=temp_path)
+                            #st.session_state.dia_qc_visualizer = DiaQcVisualizer(filepath=temp_path)
+                            st.session_state.dia_qc_visualizer = load_dia_visualizer(temp_path)
                         st.success("DIA-NN report loaded. Please review the extracted metadata in the first tab.")
                         st.rerun()
                     except (FileNotFoundError, ValueError, KeyError, IOError) as e:
@@ -50,6 +54,7 @@ class DiaQcTab:
                 else:
                     st.warning("Please upload a DIA-NN .parquet report.")
 
+    @handle_plotting_errors
     def _metadata_editor_tab(self):
         """Displays an editable table of the metadata and its summary."""
         st.info("The metadata below was automatically extracted. Edit any incorrect values, and the summary will update instantly.", icon="✏️")
@@ -113,6 +118,8 @@ class DiaQcTab:
             except Exception as e:
                 st.error(f"Failed to apply metadata changes: {e}")
                 st.session_state.dia_metadata_confirmed = False
+
+    @handle_plotting_errors           
     def _sentinel_peptides_tab(self):
         """UI for finding and displaying sentinel peptides."""
         if not st.session_state.dia_metadata_confirmed:
@@ -165,6 +172,251 @@ class DiaQcTab:
             st.dataframe(st.session_state.sentinel_peptides, use_container_width=True)
             st.caption("This list is now available for plotting in the other QC tabs.")
 
+    def _im_qc_tab(self):
+        """UI for displaying all ion mobility related QC plots."""
+        if not st.session_state.get('sentinel_peptides'):
+            st.info("Please select sentinel peptides in the 'Sentinel Peptides' tab first to enable these plots.", icon="🧬")
+            return
+
+        visualizer = st.session_state.dia_qc_visualizer
+        q_value = st.session_state.get('q_value_cutoff', 0.01)
+
+        # Create tabs for each plot
+        control_tab, drift_tab = st.tabs([
+            "📈 IM Control Chart", 
+            "💨 IM Drift"
+        ])
+
+        with control_tab:
+            st.markdown("Monitor the ion mobility of a single peptide over time. This helps identify instrument shifts or calibration issues.")
+            
+            selected_peptide = st.selectbox(
+                "Select a Sentinel Peptide to Monitor:",
+                options=st.session_state.sentinel_peptides,
+                key="im_control_peptide_select" # Use a unique key
+            )
+            
+            if selected_peptide:
+                try:
+                    fig = visualizer.plot_control_chart(
+                        peptide_id=selected_peptide,
+                        metric_col='IM',
+                        y_axis_title='Ion Mobility (1/K0)',
+                        q_value_cutoff=q_value
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                except (ValueError, KeyError) as e:
+                    st.error(f"Could not generate IM control chart: {e}")
+
+        with drift_tab:
+            st.markdown("Visualize the ion mobility deviation for multiple sentinel peptides simultaneously.")
+            
+            num_peptides_to_plot = st.slider(
+                "Number of Peptides to Display",
+                min_value=1,
+                max_value=len(st.session_state.sentinel_peptides),
+                value=min(5, len(st.session_state.sentinel_peptides)),
+                step=1,
+                key="im_drift_slider", # Use a unique key
+                help="Select how many of the top sentinel peptides to show in the plot."
+            )
+            
+            peptides_to_plot = st.session_state.sentinel_peptides[:num_peptides_to_plot]
+
+            try:
+                fig = visualizer.plot_im_drift(peptides_to_plot, q_value)
+                st.plotly_chart(fig, use_container_width=True)
+            except (ValueError, KeyError) as e:
+                st.error(f"Could not generate IM drift plot: {e}")
+
+    @handle_plotting_errors
+    def _rt_qc_tab(self):
+        """UI for displaying all retention time related QC plots using a tabbed layout."""
+        if not st.session_state.get('sentinel_peptides'):
+            st.info("Please select sentinel peptides in the 'Sentinel Peptides' tab first to enable these plots.", icon="🧬")
+            return
+
+        visualizer = st.session_state.dia_qc_visualizer
+        q_value = st.session_state.get('q_value_cutoff', 0.01)
+
+        # Add a new tab for the elution plot
+        control_tab, drift_tab, error_tab, peak_width_tab, elution_tab = st.tabs([
+            "📈 RT Control Chart", 
+            "💨 RT Drift", 
+            "📉 RT Prediction Error", 
+            "📊 Peak Width",
+            "⏳ Peptide Elution" 
+        ])
+
+        # --- Tab 1: Control Chart ---
+        with control_tab:
+            st.markdown("Monitor the retention time of a single peptide over time. This Levey-Jennings plot helps identify shifts or increased variability.")
+            
+            selected_peptide = st.selectbox(
+                "Select a Sentinel Peptide to Monitor:",
+                options=st.session_state.sentinel_peptides
+            )
+            
+            if selected_peptide:
+                try:
+                    fig = visualizer.plot_control_chart(
+                        peptide_id=selected_peptide, metric_col='RT',
+                        y_axis_title='Retention Time (min)', q_value_cutoff=q_value
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                except (ValueError, KeyError) as e:
+                    st.error(f"Could not generate control chart: {e}")
+
+        # --- Tab 2: RT Drift ---
+        with drift_tab:
+            st.markdown("Visualize the retention time deviation for multiple sentinel peptides simultaneously. This helps confirm if RT shifts are systematic.")
+            
+            # --- NEW SLIDER ---
+            num_peptides_to_plot = st.slider(
+                "Number of Peptides to Display",
+                min_value=1,
+                max_value=len(st.session_state.sentinel_peptides),
+                value=min(5, len(st.session_state.sentinel_peptides)), # Default to 5 or max available
+                step=1,
+                help="Select how many of the top sentinel peptides to show in the plot."
+            )
+            
+            # Slice the list of peptides based on the slider's value
+            peptides_to_plot = st.session_state.sentinel_peptides[:num_peptides_to_plot]
+
+            try:
+                fig = visualizer.plot_rt_drift(peptides_to_plot, q_value)
+                st.plotly_chart(fig, use_container_width=True)
+            except (ValueError, KeyError) as e:
+                st.error(f"Could not generate RT drift plot: {e}")
+                
+        # --- Tab 3: RT Prediction Error ---
+        with error_tab:
+            st.markdown("Track how well the observed retention time matches the predicted RT. A consistent, low error is desirable.")
+            
+            moving_avg_window = st.slider(
+                "Moving Average Window", min_value=1, max_value=21, value=5, step=2,
+                help="Smooths the error trend over a window of N runs."
+            )
+            
+            try:
+                fig = visualizer.plot_rt_prediction_error(q_value, moving_avg_window)
+                st.plotly_chart(fig, use_container_width=True)
+            except (ValueError, KeyError) as e:
+                st.error(f"Could not generate RT prediction error plot: {e}")
+                
+        # --- Tab 4: Peak Width Distribution ---
+        with peak_width_tab:
+            st.markdown("Assess chromatographic performance by visualizing the distribution of Full Width at Half Maximum (FWHM) for all high-confidence peptides on each day.")
+            try:
+                fig = visualizer.plot_peak_width_distribution(q_value)
+                st.plotly_chart(fig, use_container_width=True)
+            except (ValueError, KeyError) as e:
+                st.error(f"Could not generate peak width plot: {e}")
+        
+        with elution_tab:
+            st.markdown("Visualize how evenly the unique identified peptides are distributed across the entire retention time gradient.")
+            
+            # Interactive widget for histogram granularity
+            num_bins = st.slider(
+                "Number of Bins",
+                min_value=25, max_value=250, value=150, step=25,
+                help="Adjust the number of bins to make the distribution plot broader or more granular."
+            )
+            
+            try:
+                fig = visualizer.plot_peptide_elution_distribution(q_value, num_bins)
+                st.plotly_chart(fig, use_container_width=True)
+            except (ValueError, KeyError) as e:
+                st.error(f"Could not generate peptide elution plot: {e}")
+
+    @handle_plotting_errors
+    def _mass_accuracy_qc_tab(self):
+        """UI for displaying all mass accuracy related QC plots."""
+        if not st.session_state.get('sentinel_peptides'):
+            st.info("Please select sentinel peptides in 'Sentinel Peptides' tab first.", icon="🧬")
+            return
+
+        visualizer = st.session_state.dia_qc_visualizer
+        q_value = st.session_state.get('q_value_cutoff', 0.01)
+
+        dist_tab, sentinel_tab, trend_tab = st.tabs([
+            "📊 Mass Error Distribution", 
+            "📈 Sentinel Mass Accuracy", 
+            "📉 Mass Error Trend"
+        ])
+
+        with dist_tab:
+            st.markdown("Assess the overall mass accuracy by visualizing the distribution of mass error (in ppm) for all high-confidence peptides on each day.")
+            
+            y_range = st.slider(
+                "Set Y-axis Range (ppm)", min_value=-20.0, max_value=20.0, 
+                value=(-5.0, 5.0), step=0.5,
+                help="Zoom in or out to focus on the most relevant mass error range."
+            )
+            
+            try:
+                fig = visualizer.plot_mass_accuracy_distribution(q_value, list(y_range))
+                st.plotly_chart(fig, use_container_width=True)
+            except (ValueError, KeyError) as e:
+                st.error(f"Could not generate plot: {e}")
+
+        with sentinel_tab:
+            st.markdown("Track the mass accuracy for your selected sentinel peptides across all runs to spot systematic drift or inconsistencies.")
+            
+            num_peptides = st.slider(
+                "Number of Peptides to Display", 1, len(st.session_state.sentinel_peptides),
+                min(5, len(st.session_state.sentinel_peptides)), 1,
+                key="mass_acc_sentinel_slider",
+                help="Select how many sentinel peptides to show."
+            )
+            peptides_to_plot = st.session_state.sentinel_peptides[:num_peptides]
+
+            try:
+                fig = visualizer.plot_sentinel_mass_accuracy(peptides_to_plot, q_value)
+                st.plotly_chart(fig, use_container_width=True)
+            except (ValueError, KeyError) as e:
+                st.error(f"Could not generate plot: {e}")
+
+        with trend_tab:
+            st.markdown("Visualize the smoothed trend of the median mass error per run. This helps to see long-term instrument calibration drift more clearly.")
+            
+            window = st.slider(
+                "Moving Average Window", 1, 21, 5, 2,
+                key="mass_error_trend_slider",
+                help="Smooths the error trend over N runs."
+            )
+            
+            try:
+                fig = visualizer.plot_mass_error_trend(q_value, window)
+                st.plotly_chart(fig, use_container_width=True)
+            except (ValueError, KeyError) as e:
+                st.error(f"Could not generate plot: {e}")
+
+    @handle_plotting_errors
+    def _download_center_tab(self):
+        """Provides download functionality for the processed data."""
+        if not st.session_state.dia_metadata_confirmed:
+            st.warning("Please confirm your metadata in the 'Metadata Review & Edit' tab to enable downloads.", icon="⚠️")
+            return
+
+        st.info("Download the full precursor-level report combined with your finalized metadata.", icon="💾")
+        
+        visualizer = st.session_state.dia_qc_visualizer
+        processed_data = visualizer.get_processed_data()
+        
+        # Convert dataframe to CSV for download
+        csv_data = processed_data.to_csv(index=False).encode('utf-8')
+        
+        st.download_button(
+            label="Download Data as CSV",
+            data=csv_data,
+            file_name="pro_visualize_processed_data.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+    @handle_plotting_errors
     def _qc_visualizations_tab(self):
         """Displays the QC plots after metadata is confirmed."""
         if not st.session_state.dia_metadata_confirmed:
@@ -210,97 +462,14 @@ class DiaQcTab:
             self._rt_qc_tab()
 
         with im_tab:
-            st.info("This tab will show Ion Mobility stability for the selected sentinel peptides. (Under Construction)")
+            #st.info("This tab will show Ion Mobility stability for the selected sentinel peptides. (Under Construction)")
+            self._im_qc_tab()
         
         with mass_accuracy_tab:
-            st.info("This tab will show Mass Accuracy for the selected sentinel peptides. (Under in Construction)")
+            #st.info("This tab will show Mass Accuracy for the selected sentinel peptides. (Under in Construction)")
+            self._mass_accuracy_qc_tab()
 
-    def _rt_qc_tab(self):
-        """UI for displaying all retention time related QC plots."""
-        if not st.session_state.get('sentinel_peptides'):
-            st.info("Please select sentinel peptides in the 'Sentinel Peptides' tab first to enable these plots.", icon="🧬")
-            return
-
-        visualizer = st.session_state.dia_qc_visualizer
-        q_value = st.session_state.get('q_value_cutoff', 0.01)
-
-        # --- Plot 1: Control Chart ---
-        with st.expander("Show RT Control Chart", expanded=True):
-            st.markdown("Monitor the retention time of a single peptide over time. This Levey-Jennings plot helps identify shifts or increased variability.")
-            
-            # Interactive Widget: Select which peptide to plot
-            selected_peptide = st.selectbox(
-                "Select a Sentinel Peptide to Monitor:",
-                options=st.session_state.sentinel_peptides
-            )
-            
-            if selected_peptide:
-                try:
-                    fig = visualizer.plot_control_chart(
-                        peptide_id=selected_peptide,
-                        metric_col='RT',
-                        y_axis_title='Retention Time (min)',
-                        q_value_cutoff=q_value
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                except (ValueError, KeyError) as e:
-                    st.error(f"Could not generate control chart: {e}")
-
-        # --- Plot 2: RT Drift ---
-        with st.expander("Show RT Drift Plot"):
-            st.markdown("Visualize the retention time deviation for all sentinel peptides simultaneously. This helps confirm if RT shifts are systematic across all peptides.")
-            try:
-                fig = visualizer.plot_rt_drift(st.session_state.sentinel_peptides, q_value)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate RT drift plot: {e}")
-                
-        # --- Plot 3: RT Prediction Error ---
-        with st.expander("Show RT Prediction Error Plot"):
-            st.markdown("Track how well the observed retention time matches the predicted RT. A consistent, low error is desirable.")
-            
-            # Interactive Widget: Control the smoothing
-            moving_avg_window = st.slider(
-                "Moving Average Window", min_value=1, max_value=21, value=5, step=2,
-                help="Smooths the error trend over a window of N runs. Use a larger window for noisy data."
-            )
-            
-            try:
-                fig = visualizer.plot_rt_prediction_error(q_value, moving_avg_window)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate RT prediction error plot: {e}")
-                
-        # --- Plot 4: Peak Width Distribution ---
-        with st.expander("Show Peak Width Distribution"):
-            st.markdown("Assess chromatographic performance by visualizing the distribution of Full Width at Half Maximum (FWHM) for all high-confidence peptides on each day.")
-            try:
-                fig = visualizer.plot_peak_width_distribution(q_value)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate peak width plot: {e}")
-
-    def _download_center_tab(self):
-        """Provides download functionality for the processed data."""
-        if not st.session_state.dia_metadata_confirmed:
-            st.warning("Please confirm your metadata in the 'Metadata Review & Edit' tab to enable downloads.", icon="⚠️")
-            return
-
-        st.info("Download the full precursor-level report combined with your finalized metadata.", icon="💾")
-        
-        visualizer = st.session_state.dia_qc_visualizer
-        processed_data = visualizer.get_processed_data()
-        
-        # Convert dataframe to CSV for download
-        csv_data = processed_data.to_csv(index=False).encode('utf-8')
-        
-        st.download_button(
-            label="Download Data as CSV",
-            data=csv_data,
-            file_name="pro_visualize_processed_data.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+    
 
     def render(self):
         """Renders the entire DIA QC tab workflow."""
