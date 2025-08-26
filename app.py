@@ -3,6 +3,7 @@ import streamlit as st
 # --- Import Project Modules ---
 # Import the main render function from your QC module
 from modules.qc_module import render as render_qc
+from modules.dilution_module import render as render_dilution
 
 # Future modules will be imported here
 # from modules.quant_module import render as render_quant
@@ -20,7 +21,7 @@ st.title("Pro-Visualize: Proteomics Data Visualization")
 st.markdown("A scalable application for multi-omics analysis, starting with targeted and DIA-MS proteomics.")
 
 # --- Create Main Tabs for Different Analyses ---
-tab_welcome, tab_qc, tab_quant, tab_comp = st.tabs([
+tab_welcome, tab_qc, tab_dilution, tab_quant, tab_comp = st.tabs([
     "👋 Welcome",
     "📊 QC Analysis", 
     "📈 Dilution Series",
@@ -35,8 +36,9 @@ with tab_welcome:
     
     **Current Modules:**
     - **QC Analysis**: Upload and analyze Quality Control data from both DIA and Targeted (e.g., PRM/SRM) experiments.
+    - **Dilution Series (Loading-curve)**: Upload and analyze loading curve data from DIA experiments in Protein and Precursor Level.            
     
-    Navigate to the **QC Analysis** tab to begin.
+    Navigate to the **QC Analysis**  or **Dilution Series** tab to begin.
     """)
 
 with tab_qc:
@@ -45,9 +47,10 @@ with tab_qc:
     render_qc()
 
 with tab_dilution:
-    st.header("Dilution Series Analysis")
-    st.info("This section is currently under development. 🏗️")
-    # Future: Call render_dilution()
+    #st.header("Dilution Series Analysis")
+    #st.info("This section is currently under development. 🏗️")
+    # Future: 
+    render_dilution()
 
 with tab_quant:
     st.header("Protein Quantification")
