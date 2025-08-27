@@ -19,3 +19,5 @@ def handle_plotting_errors(plot_function):
             st.error(f"An error occurred in '{plot_function.__name__}': {e}", icon="💔")
             logger.error(f"{error_message}. Reason: {e}", exc_info=True)
     return wrapper
+
+# A built-in set of common human transcription factor gene names for coloring
