@@ -24,6 +24,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import requests
+import json
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -376,4 +379,156 @@ class ComparativeVisualizer:
         fig.update_traces(marker=dict(size=3)) # Smaller points
         fig.update_yaxes(title_text="log2(Intensity)")
 
+        return fig
+    
+    def run_enrichment_analysis(self, gene_list: list, organism: str = "human"):
+        """
+        Perform comprehensive enrichment analysis for a list of genes using Enrichr.
+        This method is adapted from the user-provided 'get_all_enrichment_enrichr'.
+        """
+        logger.info(f"Running Enrichr analysis for {len(gene_list)} genes on organism '{organism}'...")
+        if not gene_list:
+            raise ValueError("Gene list for enrichment analysis cannot be empty.")
+
+        organism_libraries = {
+            "human": ['GO_Biological_Process_2023', 'GO_Cellular_Component_2023', 'GO_Molecular_Function_2023', 'KEGG_2021_Human', 'Reactome_2022'],
+            "mouse": ['GO_Biological_Process_2023', 'GO_Cellular_Component_2023', 'GO_Molecular_Function_2023', 'KEGG_2019_Mouse', 'Reactome_2022'],
+        }
+        source_mapping = {
+            'GO_Biological_Process_2023': 'GO:BP', 'GO_Cellular_Component_2023': 'GO:CC',
+            'GO_Molecular_Function_2023': 'GO:MF', 'KEGG_2021_Human': 'KEGG',
+            'KEGG_2019_Mouse': 'KEGG', 'Reactome_2022': 'REAC'
+        }
+
+        if organism.lower() not in organism_libraries:
+            raise ValueError(f"Organism '{organism}' is not supported by this function.")
+
+        ENRICHR_URL = 'https://maayanlab.cloud/Enrichr'
+        genes_str = '\n'.join(gene_list)
+        payload = {'list': (None, genes_str), 'description': (None, 'Pro-Visualize Analysis')}
+        
+        try:
+            response = requests.post(f'{ENRICHR_URL}/addList', files=payload)
+            response.raise_for_status()
+            user_list_id = response.json()['userListId']
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Failed to submit gene list to Enrichr: {e}")
+
+        all_results = []
+        for library in organism_libraries[organism.lower()]:
+            time.sleep(0.5) # Be courteous to the API
+            try:
+                query_url = f'{ENRICHR_URL}/enrich?userListId={user_list_id}&backgroundType={library}'
+                response = requests.get(query_url)
+                response.raise_for_status()
+                data = response.json().get(library, [])
+                
+                for result in data:
+                    all_results.append({
+                        'source': source_mapping.get(library, library),
+                        'name': result[1],
+                        'p_value': float(result[2]),
+                        'adj_p_value': float(result[6]),
+                        'genes': ";".join(result[5]),
+                        'intersection_size': len(result[5])
+                    })
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Could not retrieve results from Enrichr library {library}: {e}")
+        
+        if not all_results:
+            return pd.DataFrame()
+
+        results_df = pd.DataFrame(all_results).sort_values('p_value').reset_index(drop=True)
+        results_df['-log10(p)'] = -np.log10(results_df['p_value'])
+        return results_df
+
+    def plot_enrichment_manhattan(self, enrichment_df: pd.DataFrame):
+        """
+        Creates an enhanced Manhattan-like plot with colored blocks for each source.
+        """
+        if enrichment_df.empty:
+            raise ValueError("Enrichment data is empty, cannot generate Manhattan plot.")
+
+        # Define a consistent order for sources
+        source_order = sorted(enrichment_df['source'].unique())
+        enrichment_df['source'] = pd.Categorical(enrichment_df['source'], categories=source_order, ordered=True)
+        enrichment_df = enrichment_df.sort_values('source')
+        
+        # Assign a continuous index for plotting
+        enrichment_df['index'] = range(len(enrichment_df))
+
+        fig = px.scatter(
+            enrichment_df,
+            x='index',
+            y='-log10(p)',
+            color='source',
+            size='intersection_size',
+            hover_name='name',
+            hover_data=['p_value', 'genes'],
+            title="Pathway Enrichment Manhattan Plot",
+            labels={'index': 'Enrichment Terms by Source', '-log10(p)': '-log10(p-value)'}
+        )
+
+        # Add shaded regions for each source category
+        start_idx = 0
+        for i, source in enumerate(source_order):
+            source_data = enrichment_df[enrichment_df['source'] == source]
+            if not source_data.empty:
+                count = len(source_data)
+                fig.add_shape(
+                    type='rect',
+                    x0=start_idx - 0.5, x1=start_idx + count - 0.5,
+                    y0=0, y1=enrichment_df['-log10(p)'].max() * 1.05,
+                    fillcolor=px.colors.qualitative.Plotly[i % len(px.colors.qualitative.Plotly)],
+                    opacity=0.1, line_width=0, layer='below'
+                )
+                start_idx += count
+
+        fig.update_xaxes(showticklabels=False)
+        fig.update_layout(height=600)
+        return fig
+
+    def plot_enrichment_dotplot(self, enrichment_df: pd.DataFrame, terms_to_plot: list = None):
+        """
+        Generates a dot plot for enriched terms, with corrected legend ticks.
+        """
+        if enrichment_df.empty:
+            raise ValueError("Enrichment data is empty, cannot generate dot plot.")
+        
+        enrichment_df['adj_p_value'] = pd.to_numeric(enrichment_df['adj_p_value'], errors='coerce')
+        enrichment_df = enrichment_df.dropna(subset=['adj_p_value'])
+        enrichment_df['-log10(q)'] = -np.log10(enrichment_df['adj_p_value'] + 1e-10)
+        
+        if terms_to_plot:
+            plot_data = enrichment_df[enrichment_df['name'].isin(terms_to_plot)]
+        else:
+            plot_data = enrichment_df.sort_values(by='adj_p_value').head(10)
+        
+        plot_data = plot_data.sort_values(by='-log10(q)', ascending=True)
+
+        fig = px.scatter(
+            plot_data,
+            x='-log10(q)',
+            y='name',
+            size='intersection_size',
+            color='intersection_size',
+            color_continuous_scale='viridis',
+            hover_name='name',
+            hover_data=['source', 'adj_p_value', 'genes'],
+            title="Top Enriched Pathways"
+        )
+        
+        min_count = plot_data['intersection_size'].min()
+        max_count = plot_data['intersection_size'].max()
+        # Create integer ticks for the color bar
+        tick_values = np.linspace(min_count, max_count, num=min(5, max_count - min_count + 1), dtype=int)
+
+        fig.update_layout(
+            height=max(500, len(plot_data) * 25),
+            yaxis={'categoryorder':'total ascending'},
+            xaxis_title="-log10(q-value)",
+            yaxis_title="Pathway Term",
+            coloraxis_colorbar_title_text='Gene Count',
+            coloraxis_colorbar_tickvals=tick_values # Apply integer ticks
+        )
         return fig

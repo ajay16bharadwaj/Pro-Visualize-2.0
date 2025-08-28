@@ -92,10 +92,10 @@ class ComparativeTab:
         if st.session_state.comp_visualizer:
             visualizer = st.session_state.comp_visualizer
             
-            # --- NEW: Added "Expression Plots" tab ---
-            overview_tab, selection_tab, volcano_tab, heatmap_tab, expression_tab = st.tabs([
+            
+            overview_tab, selection_tab, volcano_tab, heatmap_tab, expression_tab, pathway_tab = st.tabs([
                 "📥 Data Overview", "🎯 Significant Protein Selection", "🌋 Volcano Plots", 
-                "🔥 Heatmaps", "🎻 Expression Plots"
+                "🔥 Heatmaps", "🎻 Expression Plots", "🌐 Pathway Analysis"
             ])
 
             with overview_tab:
@@ -239,6 +239,106 @@ class ComparativeTab:
                             st.plotly_chart(fig, use_container_width=True)
                     except Exception as e:
                         st.error(f"Failed to generate violin plot: {e}")
+
+            with pathway_tab:
+                st.markdown("### Pathway Enrichment Analysis")
+                st.info("Perform pathway enrichment on a selected gene set using the Enrichr API.")
+
+                gene_list_option = st.selectbox(
+                    "Select gene set for analysis:",
+                    options=["All Significant", "Up-regulated Only", "Down-regulated Only", "Custom Selection"]
+                )
+                
+                gene_list = []
+                significant_df = st.session_state.significant_proteins
+                protein_info = visualizer.protein_df[[visualizer.column_config['protein_id'], 'Gene Name']].dropna()
+                significant_genes_df = pd.merge(significant_df, protein_info, left_on=visualizer.column_config['comp_protein_id'], right_on=visualizer.column_config['protein_id'])
+
+                if gene_list_option == "All Significant":
+                    gene_list = significant_genes_df['Gene Name'].unique().tolist()
+                elif gene_list_option == "Up-regulated Only":
+                    gene_list = significant_genes_df[significant_genes_df['Regulation'] == 'Up-regulated']['Gene Name'].unique().tolist()
+                elif gene_list_option == "Down-regulated Only":
+                    gene_list = significant_genes_df[significant_genes_df['Regulation'] == 'Down-regulated']['Gene Name'].unique().tolist()
+                
+                elif gene_list_option == "Custom Selection":
+                    # --- NEW: Interactive dataframe for custom selection ---
+                    st.markdown("Select specific proteins from the table below to include in the analysis.")
+                    protein_info_df = visualizer.protein_df[[
+                        visualizer.column_config['protein_id'], 'Gene Name', 'Protein Description'
+                    ]].drop_duplicates().reset_index(drop=True)
+
+                    selection = st.dataframe(
+                        protein_info_df,
+                        use_container_width=True, hide_index=True, on_select="rerun",
+                        selection_mode="multi-row", key="pathway_custom_select"
+                    )
+                    
+                    selected_indices = selection.selection["rows"]
+                    if selected_indices:
+                        gene_list = protein_info_df.iloc[selected_indices]['Gene Name'].dropna().unique().tolist()
+
+                st.markdown(f"**{len(gene_list)}** unique genes selected for analysis.")
+                organism = st.selectbox("Select organism:", options=["human", "mouse"])
+
+                if st.button("Run Pathway Analysis", use_container_width=True) and gene_list:
+                    from utils.caching import run_cached_enrichment
+                    enrichment_results = run_cached_enrichment(visualizer, gene_list, organism)
+                    st.session_state.enrichment_results = enrichment_results
+                    st.rerun()
+                
+                if 'enrichment_results' in st.session_state and not st.session_state.enrichment_results.empty:
+                    st.success("Enrichment analysis complete! View results in the tabs below.")
+                    
+                    q_value_cutoff = st.slider(
+                        "Filter results by q-value (adjusted p-value):",
+                        min_value=0.0, max_value=1.0, value=0.2, step=0.01
+                    )
+                    
+                    results_df = st.session_state.enrichment_results
+                    filtered_results_df = results_df[results_df['adj_p_value'] <= q_value_cutoff]
+                    
+                    if filtered_results_df.empty:
+                        st.warning("No enrichment terms passed the current q-value filter.")
+                        return
+
+                    source_name_map = {
+                        'GO:BP': 'GO Biological Process', 'GO:CC': 'GO Cellular Component',
+                        'GO:MF': 'GO Molecular Function', 'KEGG': 'KEGG Pathways', 'REAC': 'Reactome Pathways'
+                    }
+                    available_sources = sorted(filtered_results_df['source'].unique().tolist())
+                    tab_names = ["Comprehensive Analysis"] + [source_name_map.get(s, s) for s in available_sources]
+                    
+                    tabs = st.tabs(tab_names)
+                    
+                    with tabs[0]: # Comprehensive Manhattan Plot
+                        st.markdown("#### Comprehensive Manhattan Plot")
+                        fig = visualizer.plot_enrichment_manhattan(filtered_results_df)
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    for i, source_code in enumerate(available_sources):
+                        with tabs[i+1]:
+                            full_source_name = source_name_map.get(source_code, source_code)
+                            st.markdown(f"#### Enriched Terms for {full_source_name}")
+                            source_df = filtered_results_df[filtered_results_df['source'] == source_code].reset_index(drop=True)
+
+                            with st.expander("Select custom terms to plot"):
+                                selection = st.dataframe(
+                                    source_df[['name', 'adj_p_value', 'genes', 'intersection_size']],
+                                    use_container_width=True, hide_index=True, on_select="rerun",
+                                    selection_mode="multi-row", key=f"table_{source_code}"
+                                )
+                            
+                            selected_indices = selection.selection["rows"]
+                            if selected_indices:
+                                selected_terms = source_df.iloc[selected_indices]['name'].tolist()
+                                st.markdown(f"**Displaying {len(selected_terms)} selected terms.**")
+                                fig = visualizer.plot_enrichment_dotplot(source_df, terms_to_plot=selected_terms)
+                            else:
+                                st.markdown("**Displaying top 10 terms by q-value.**")
+                                fig = visualizer.plot_enrichment_dotplot(source_df)
+                            
+                            st.plotly_chart(fig, use_container_width=True)
 
         else:
             st.info("Upload your data to begin the comparative analysis.")
