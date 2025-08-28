@@ -35,6 +35,16 @@ class ComparativeVisualizer:
     Handles data loading, validation, and visualization for comparative analysis.
     """
 
+    HUMAN_TRANSCRIPTION_FACTORS = set([
+        'ATF1', 'ATF2', 'ATF3', 'ATF4', 'ATF5', 'ATF6', 'ATF7', 'CREB1', 'CREB3',
+        'CREB5', 'FOS', 'FOSB', 'JUN', 'JUNB', 'JUND', 'MYC', 'MYCN', 'MAX', 'MAD',
+        'CEBPA', 'CEBPB', 'CEBPD', 'EGR1', 'EGR2', 'EGR3', 'EGR4', 'SP1', 'SP2',
+        'SP3', 'SP4', 'KLF1', 'KLF2', 'KLF4', 'KLF5', 'STAT1', 'STAT2', 'STAT3',
+        'STAT4', 'STAT5A', 'STAT5B', 'STAT6', 'NFKB1', 'NFKB2', 'RELA', 'RELB',
+        'TP53', 'TP63', 'TP73', 'SOX2', 'SOX9', 'POU5F1', 'NANOG', 'GATA1', 'GATA2',
+        'GATA3', 'GATA4', 'GATA6', 'RUNX1', 'RUNX2', 'RUNX3', 'TCF3', 'TCF4', 'LEF1'
+    ])
+
     def __init__(self, protein_df: pd.DataFrame, annotation_df: pd.DataFrame, 
                  comparative_df: pd.DataFrame, column_config: dict):
         """
@@ -91,6 +101,32 @@ class ComparativeVisualizer:
     def get_comparative_data_preview(self):
         return self.comparative_df
     
+    def get_transcription_factor_count(self) -> int:
+        """
+        Counts how many proteins in the current comparative dataset match the built-in TF list.
+        """
+        # Ensure 'Gene Name' is available by merging with the main protein info
+        protein_id_col = self.column_config['protein_id']
+        comp_protein_col = self.column_config['comp_protein_id']
+        
+        if 'Gene Name' not in self.protein_df.columns:
+            return 0
+        
+        # Merge to get gene names for the proteins in the comparative analysis results
+        merged_df = pd.merge(
+            self.comparative_df[[comp_protein_col]],
+            self.protein_df[[protein_id_col, 'Gene Name']],
+            left_on=comp_protein_col,
+            right_on=protein_id_col,
+            how='left'
+        )
+        
+        if 'Gene Name' not in merged_df.columns:
+            return 0
+            
+        tf_found = merged_df['Gene Name'].isin(self.HUMAN_TRANSCRIPTION_FACTORS)
+        return tf_found.sum()
+    
     def get_comparison_groups(self) -> list:
         """
         Returns a list of unique comparison labels from the comparative data.
@@ -136,92 +172,77 @@ class ComparativeVisualizer:
 
     def plot_volcano(self, fdr_cutoff: float, fc_cutoff: float,
                      proteins_to_annotate=None, color_by_option='None',
-                     custom_list=None, keyword=None):
+                     custom_list=None, keyword=None, annotate_top_10=False):
         """
-        Generates a volcano plot with extensive customization options.
+        Generates a volcano plot with an option to auto-annotate the top 10 DE proteins.
         """
         logger.info(f"Generating volcano plot with options: {color_by_option}")
         
-        # 1. Get column names from config
+        # 1. Get column names and prepare data (unchanged)
         comp_protein_col = self.column_config['comp_protein_id']
         fc_col = self.column_config['fold_change']
         fdr_col = self.column_config['fdr']
         label_col = self.column_config['comparison_label']
         
-        # 2. Prepare the data for the selected comparison
-        comparison = self.comparative_df[label_col].iloc[0] # Assume df is pre-filtered
+        comparison = self.comparative_df[label_col].iloc[0]
         plot_df = self.comparative_df.copy()
         plot_df['-log10(FDR)'] = -np.log10(plot_df[fdr_col])
 
-        # Merge with protein info for tooltips and searching
         protein_info_cols = ['Gene Name', 'Protein Description']
         protein_id_col = self.column_config['protein_id']
-        
-        # Ensure columns exist in the main protein_df before merging
         for col in protein_info_cols:
-            if col not in self.protein_df.columns:
-                self.protein_df[col] = '' 
-                
+            if col not in self.protein_df.columns: self.protein_df[col] = '' 
         plot_df = pd.merge(
             plot_df,
             self.protein_df[[protein_id_col] + protein_info_cols].drop_duplicates(subset=[protein_id_col]),
             left_on=comp_protein_col, right_on=protein_id_col, how='left'
         )
 
-        # 3. Define significance categories
+        # 2. Define significance and custom colors (unchanged)
         plot_df['Color'] = 'Non-significant'
         plot_df.loc[plot_df[fdr_col] <= fdr_cutoff, 'Color'] = 'Significant'
         plot_df.loc[(plot_df[fdr_col] <= fdr_cutoff) & (plot_df[fc_col] > fc_cutoff), 'Color'] = 'Up-regulated'
         plot_df.loc[(plot_df[fdr_col] <= fdr_cutoff) & (plot_df[fc_col] < -fc_cutoff), 'Color'] = 'Down-regulated'
-
-        # 4. Apply custom coloring logic (overrides significance)
-        color_map = {
-            'Up-regulated': '#D55E00',
-            'Down-regulated': '#0072B2',
-            'Significant': '#F0E442',
-            'Non-significant': '#999999'
-        }
-        
+        color_map = {'Up-regulated': '#D55E00', 'Down-regulated': '#0072B2', 'Significant': '#F0E442', 'Non-significant': '#999999'}
         if color_by_option == 'Custom List' and custom_list:
             mask = plot_df[comp_protein_col].isin(custom_list) | plot_df['Gene Name'].isin(custom_list)
-            plot_df.loc[mask, 'Color'] = 'In Custom List'
-            color_map['In Custom List'] = '#009E73' # Teal
+            plot_df.loc[mask, 'Color'] = 'In Custom List'; color_map['In Custom List'] = '#009E73'
         elif color_by_option == 'Transcription Factors':
             mask = plot_df['Gene Name'].isin(self.HUMAN_TRANSCRIPTION_FACTORS)
-            plot_df.loc[mask, 'Color'] = 'Transcription Factor'
-            color_map['Transcription Factor'] = '#CC79A7' # Pink/Purple
+            plot_df.loc[mask, 'Color'] = 'Transcription Factor'; color_map['Transcription Factor'] = '#CC79A7'
         elif color_by_option == 'Keyword Search' and keyword:
             mask = plot_df['Protein Description'].str.contains(keyword, case=False, na=False)
-            plot_df.loc[mask, 'Color'] = f"Contains '{keyword}'"
-            color_map[f"Contains '{keyword}'"] = '#56B4E9' # Sky Blue
+            plot_df.loc[mask, 'Color'] = f"Contains '{keyword}'"; color_map[f"Contains '{keyword}'"] = '#56B4E9'
 
-        # 5. Create the scatter plot
+        # 3. Create scatter plot (unchanged)
         fig = px.scatter(
-            plot_df,
-            x=fc_col,
-            y='-log10(FDR)',
-            color='Color',
-            color_discrete_map=color_map,
-            hover_data=[comp_protein_col, 'Gene Name', 'Protein Description'],
+            plot_df, x=fc_col, y='-log10(FDR)', color='Color',
+            color_discrete_map=color_map, hover_data=[comp_protein_col, 'Gene Name', 'Protein Description'],
             title=f"Volcano Plot for {comparison}"
         )
-
-        # 6. Add threshold lines
         fig.add_vline(x=fc_cutoff, line_dash="dash", line_color="grey")
         fig.add_vline(x=-fc_cutoff, line_dash="dash", line_color="grey")
         fig.add_hline(y=-np.log10(fdr_cutoff), line_dash="dash", line_color="grey")
 
-        # 7. Add annotations
-        if proteins_to_annotate:
-            for protein_id in proteins_to_annotate:
+        # --- NEW: 4. Annotation logic with default Top 10 ---
+        final_annotations = set(proteins_to_annotate if proteins_to_annotate else [])
+        if annotate_top_10:
+            # Find top 10 significant proteins by lowest FDR
+            significant_df = plot_df[(plot_df[fdr_col] <= fdr_cutoff) & (plot_df[fc_col].abs() >= fc_cutoff)]
+            top_10_df = significant_df.nsmallest(10, fdr_col)
+            for protein in top_10_df['Gene Name'].fillna(top_10_df[comp_protein_col]).tolist():
+                final_annotations.add(protein)
+        
+        if final_annotations:
+            for protein_id in final_annotations:
                 protein_data = plot_df[(plot_df[comp_protein_col] == protein_id) | (plot_df['Gene Name'] == protein_id)]
                 if not protein_data.empty:
                     row = protein_data.iloc[0]
                     fig.add_annotation(
                         x=row[fc_col], y=row['-log10(FDR)'],
                         text=row.get('Gene Name') or row.get(comp_protein_col),
-                        showarrow=True, arrowhead=2, arrowsize=1,
-                        ax=20, ay=-40, font=dict(color="black", size=12)
+                        showarrow=True, arrowhead=2, arrowsize=1, ax=20, ay=-40,
+                        font=dict(color="black", size=12)
                     )
         
         fig.update_layout(height=700)

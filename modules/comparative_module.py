@@ -126,7 +126,6 @@ class ComparativeTab:
                     except Exception as e: st.error(f"An error occurred during filtering: {e}")
 
             with volcano_tab:
-                # ... (Code is unchanged)
                 st.markdown("### Volcano Plot")
                 if not st.session_state.selected_comparison:
                     st.warning("Please select a comparison in the 'Significant Protein Selection' tab first.")
@@ -134,30 +133,48 @@ class ComparativeTab:
                     st.info(f"Displaying volcano plot for **{st.session_state.selected_comparison}**.")
                     with st.expander("Customize Plot"):
                         st.markdown("**1. Annotate Proteins**")
+                        
+                        # --- NEW: Add toggle for default annotations ---
+                        annotate_top_10 = st.toggle("Automatically mark top 10 proteins", value=True)
+
                         protein_id_col = visualizer.column_config['protein_id']
                         gene_name_col = 'Gene Name' if 'Gene Name' in visualizer.protein_df.columns else None
                         if gene_name_col: protein_options = [f"{gene} ({pid})" for gene, pid in visualizer.protein_df[[gene_name_col, protein_id_col]].dropna().values]
                         else: protein_options = visualizer.protein_df[protein_id_col].dropna().unique().tolist()
-                        proteins_to_annotate = st.multiselect("Select proteins to mark with an arrow:", options=protein_options, key="volcano_annotate")
+                        proteins_to_annotate = st.multiselect("Also mark these specific proteins:", options=protein_options, key="volcano_annotate")
                         cleaned_annotations = [item.split(" (")[0] for item in proteins_to_annotate] if gene_name_col else proteins_to_annotate
+                        
                         st.markdown("**2. Highlight Proteins by Category**")
                         color_by_option = st.selectbox("Choose a highlighting method:", ['None', 'Custom List', 'Transcription Factors', 'Keyword Search'], key="volcano_color")
                         custom_list, keyword = None, None
                         if color_by_option == 'Custom List':
                             custom_list_input = st.text_area("Enter a list of Protein IDs or Gene Names (one per line):", key="volcano_custom_list")
                             custom_list = [item.strip() for item in custom_list_input.split('\n') if item.strip()]
-                        elif color_by_option == 'Transcription Factors': st.info("Proteins matching the built-in list of transcription factors will be highlighted.")
+                        elif color_by_option == 'Transcription Factors':
+                            tf_count = visualizer.get_transcription_factor_count()
+                            if tf_count == 0:
+                                st.warning("No proteins in your data matched the built-in list of transcription factors.")
+                            else:
+                                st.info(f"Found **{tf_count}** potential transcription factors to highlight.")
                         elif color_by_option == 'Keyword Search': keyword = st.text_input("Enter a keyword to search in 'Protein Description':", key="volcano_keyword")
+
                     try:
                         comp_df_subset = visualizer.comparative_df[visualizer.comparative_df[visualizer.column_config['comparison_label']] == st.session_state.selected_comparison]
-                        temp_visualizer = ComparativeVisualizer(visualizer.protein_df, visualizer.annotation_df, comp_df_subset, visualizer.column_config)
+                        temp_visualizer = ComparativeVisualizer(
+                            visualizer.protein_df, visualizer.annotation_df, comp_df_subset, visualizer.column_config
+                        )
                         with st.spinner("Generating volcano plot..."):
                             fig = temp_visualizer.plot_volcano(
                                 fdr_cutoff=st.session_state.fdr_cutoff, fc_cutoff=st.session_state.fc_cutoff,
-                                proteins_to_annotate=cleaned_annotations, color_by_option=color_by_option,
-                                custom_list=custom_list, keyword=keyword)
+                                proteins_to_annotate=cleaned_annotations,
+                                color_by_option=color_by_option,
+                                custom_list=custom_list,
+                                keyword=keyword,
+                                annotate_top_10=annotate_top_10 # Pass toggle state
+                            )
                             st.plotly_chart(fig, use_container_width=True)
-                    except Exception as e: st.error(f"Failed to generate volcano plot: {e}")
+                    except Exception as e:
+                        st.error(f"Failed to generate volcano plot: {e}")
 
             with heatmap_tab:
                 # ... (Code is unchanged)
