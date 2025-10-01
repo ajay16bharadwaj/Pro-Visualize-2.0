@@ -219,7 +219,6 @@ class ComparativeTab:
 
                 protein_id_col = visualizer.column_config['comp_protein_id']
                 fdr_col = visualizer.column_config['fdr']
-                fc_col = visualizer.column_config['fold_change']
                 protein_list = []
                 significant_df = st.session_state.significant_proteins
 
@@ -242,16 +241,28 @@ class ComparativeTab:
                     protein_list = down_df.sort_values(by=fdr_col).head(10)[protein_id_col].tolist()
 
                 elif protein_selection_method == "Custom Selection":
-                    protein_info_df = visualizer.protein_df[[visualizer.column_config['protein_id'], 'Gene Name']].drop_duplicates()
-                    protein_options = [f"{gene} ({pid})" for gene, pid in protein_info_df.values]
-                    selected_options = st.multiselect("Select proteins to plot:", options=protein_options)
-                    protein_list = [opt.split('(')[-1].strip(')') for opt in selected_options]
+                    # --- NEW: Replaced multiselect with the searchable dataframe selector ---
+                    st.markdown("Select specific proteins from the table below to include in the plot.")
+                    protein_info_df = visualizer.protein_df[[
+                        visualizer.column_config['protein_id'], 'Gene Name', 'Protein Description'
+                    ]].drop_duplicates().reset_index(drop=True)
+
+                    selection = st.dataframe(
+                        protein_info_df,
+                        use_container_width=True, hide_index=True, on_select="rerun",
+                        selection_mode="multi-row", key="violin_custom_select"
+                    )
+                    
+                    selected_indices = selection.selection["rows"]
+                    if selected_indices:
+                        protein_list = protein_info_df.iloc[selected_indices][visualizer.column_config['protein_id']].tolist()
                 
                 if not protein_list:
                     st.warning("No proteins selected to display. Please make a selection.")
                 else:
+                    st.markdown(f"**Displaying violin plots for {len(protein_list)} selected proteins.**")
                     try:
-                        with st.spinner(f"Generating violin plots for {len(protein_list)} proteins..."):
+                        with st.spinner(f"Generating violin plots..."):
                             fig = visualizer.plot_expression_violin(protein_list)
                             st.plotly_chart(fig, use_container_width=True)
                     except Exception as e:

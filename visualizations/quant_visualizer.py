@@ -191,89 +191,66 @@ class QuantificationVisualizer:
     def plot_missing_values_heatmap(self):
         """
         Generates an enhanced heatmap to visualize the pattern of missing proteins.
-        Includes a clear legend for groups and missing/observed status, and non-overlapping labels.
+        This version ensures unique samples are plotted to prevent duplicate labels.
         """
         logger.info("Generating enhanced missing values heatmap...")
         if self.annotation_df is None:
-            raise ValueError("Annotation data is required for the missing values heatmap.")
+            raise ValueError("Annotation data is required to group samples for the missing values heatmap.")
 
-        # 1. Prepare data (same as before)
-        protein_subset = self.protein_df[self.sample_cols]
+        # --- FIX: A more robust method to get a unique, sorted list of samples ---
+        # 1. Start with the unique sample identifiers from the annotation file.
+        meta_unique_samples = self.annotation_df[[self.sample_col, self.group_col]].drop_duplicates(subset=[self.sample_col])
+
+        # 2. Find the intersection of samples that exist in BOTH the protein data and the unique metadata.
+        valid_samples = list(set(self.sample_cols) & set(meta_unique_samples[self.sample_col]))
+        
+        # 3. Filter the unique metadata to this final valid list and sort it by group.
+        sorted_meta = meta_unique_samples[meta_unique_samples[self.sample_col].isin(valid_samples)].sort_values(by=self.group_col)
+        sorted_samples = sorted_meta[self.sample_col].tolist()
+
+        # 4. Filter for proteins with at least one missing value across the valid samples
+        protein_subset = self.protein_df[sorted_samples]
         missing_mask = protein_subset.isnull().any(axis=1)
-        df_missing = self.protein_df[missing_mask]
+        df_missing = self.protein_df.loc[missing_mask]
 
         if df_missing.empty:
             fig = go.Figure()
             fig.update_layout(title="No Missing Proteins Found", xaxis_showticklabels=False, yaxis_showticklabels=False)
             return fig
 
-        sorted_meta = self.annotation_df.sort_values(by=self.group_col)
-        sorted_samples = sorted_meta[self.sample_col].tolist()
         binary_matrix = df_missing[sorted_samples].notna().astype(int)
 
-        # 2. Create subplots (same as before)
-        fig = make_subplots(
-            rows=2, cols=1,
-            row_heights=[0.9, 0.1],
-            vertical_spacing=0.02
-        )
+        # 5. Create plots (logic is unchanged)
+        fig = make_subplots(rows=2, cols=1, row_heights=[0.9, 0.1], vertical_spacing=0.02)
 
-        # 3. Create the main heatmap (same as before)
         fig.add_trace(go.Heatmap(
-            z=binary_matrix.values,
-            x=binary_matrix.columns,
-            y=[f"Protein {i}" for i in range(len(binary_matrix))],
-            colorscale=[[0, 'white'], [1, 'black']],
-            showscale=False,
-            name=""
+            z=binary_matrix.values, x=binary_matrix.columns, y=[f"Protein {i}" for i in range(len(binary_matrix))],
+            colorscale=[[0, 'white'], [1, 'black']], showscale=False, name=""
         ), row=1, col=1)
 
-        # 4. Create the group annotation bar (same as before)
         group_names = sorted_meta[self.group_col].unique()
         group_map = {name: i for i, name in enumerate(group_names)}
         group_colors_numeric = sorted_meta[self.group_col].map(group_map)
         color_scale = px.colors.qualitative.Plotly
         
         fig.add_trace(go.Heatmap(
-            z=[group_colors_numeric.values],
-            x=sorted_samples,
-            y=['Group'],
+            z=[group_colors_numeric.values], x=sorted_samples, y=['Group'],
             colorscale=[[i / (len(group_names) - 1), color_scale[i % len(color_scale)]] for i in range(len(group_names))] if len(group_names) > 1 else [[0, color_scale[0]], [1, color_scale[0]]],
-            showscale=False,
-            name=""
+            showscale=False, name=""
         ), row=2, col=1)
 
-        # --- NEW: 5. Add dummy traces to create a custom legend ---
-        # Legend for Missing/Observed status
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode='markers', name='Observed',
-            marker=dict(size=10, color='black', symbol='square')
-        ))
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode='markers', name='Missing',
-            marker=dict(size=10, color='white', symbol='square', line=dict(width=1, color='black'))
-        ))
-
-        # Legend for Experimental Groups
+        # 6. Add legend (logic is unchanged)
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name='Observed', marker=dict(size=10, color='black', symbol='square')))
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name='Missing', marker=dict(size=10, color='white', symbol='square', line=dict(width=1, color='black'))))
         for i, group in enumerate(group_names):
-            fig.add_trace(go.Scatter(
-                x=[None], y=[None], mode='markers', name=group,
-                marker=dict(size=10, color=color_scale[i % len(color_scale)], symbol='square')
-            ))
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name=group, marker=dict(size=10, color=color_scale[i % len(color_scale)], symbol='square')))
 
-        # --- NEW: 6. Final layout adjustments with fixes ---
+        # 7. Final layout (logic is unchanged)
         fig.update_layout(
-            title_text='Missing Proteins Pattern',
-            height=600,
-            xaxis_tickangle=-90,
-            # Fix for overlapping labels by reducing font size
-            xaxis_tickfont=dict(size=8),
-            yaxis_title="Proteins missing<br>from at least one sample",
-            yaxis_showticklabels=False, yaxis_ticks="",
-            yaxis2_showticklabels=False, yaxis2_ticks="",
-            margin=dict(b=150, l=80), # Adjusted margins
-            legend_title_text='Legend',
-            legend_tracegroupgap=20 # Adds space between legend groups
+            title_text='Missing Proteins Pattern', height=600, xaxis_tickangle=-90,
+            xaxis_tickfont=dict(size=8), yaxis_title="Proteins missing<br>from at least one sample",
+            yaxis_showticklabels=False, yaxis_ticks="", yaxis2_showticklabels=False, yaxis2_ticks="",
+            margin=dict(b=150, l=80), legend_title_text='Legend', legend_tracegroupgap=20
         )
         return fig
     
@@ -284,82 +261,71 @@ class QuantificationVisualizer:
         """
         logger.info("Generating missing value distribution plots...")
 
-        # 1. Melt dataframe and calculate stats for each protein
+        # 1. Prepare data (unchanged)
         df_long = self.protein_df.melt(
             id_vars=[self.protein_col],
             value_vars=self.sample_cols,
             var_name='Sample',
             value_name='Intensity'
         )
-
-        # Replace 0 with NaN to handle them as missing
         df_long['Intensity'] = df_long['Intensity'].replace(0, np.nan)
-
-        # Calculate mean intensity and missing status for each protein
         protein_stats = df_long.groupby(self.protein_col)['Intensity'].agg(
             mean_intensity=lambda x: x.mean(skipna=True),
             has_missing_values=lambda x: x.isnull().any()
         ).dropna(subset=['mean_intensity'])
-
         protein_stats['log2_intensity'] = np.log2(protein_stats['mean_intensity'])
-
-        # 2. Prepare data for the two subplots
-        # For the density plot
+        
         dist_data_missing = protein_stats[protein_stats['has_missing_values'] == True]['log2_intensity']
         dist_data_observed = protein_stats[protein_stats['has_missing_values'] == False]['log2_intensity']
 
-        # For the cumulative fraction plot (ECDF)
+        # --- NEW: Check for empty data groups before plotting ---
+        if dist_data_missing.empty or dist_data_observed.empty:
+            message = "No missing values found." if dist_data_missing.empty else "All proteins have missing values."
+            fig = go.Figure()
+            fig.update_layout(
+                title="Cannot Generate Plot",
+                xaxis={'visible': False},
+                yaxis={'visible': False},
+                annotations=[{"text": f"{message}<br>Comparison requires both groups.", "showarrow": False}]
+            )
+            return fig
+
+        # 2. Prepare data for plots (unchanged)
         def get_ecdf_data(series):
             sorted_series = series.sort_values()
             cumulative_fraction = np.arange(1, len(sorted_series) + 1) / len(sorted_series)
             return pd.DataFrame({'log2_intensity': sorted_series, 'cumulative_fraction': cumulative_fraction})
-
         ecdf_missing = get_ecdf_data(dist_data_missing)
         ecdf_observed = get_ecdf_data(dist_data_observed)
 
-        # 3. Create the figure with subplots
+        # 3. Create plots (unchanged)
         fig = make_subplots(
             rows=1, cols=2,
             subplot_titles=("Density of missing values", "Cumulative fraction of missing values")
         )
-
-        # 4. Create the density plot (left subplot)
-        # We use a figure factory for convenience, then extract the traces
         dist_fig = ff.create_distplot(
             [dist_data_observed, dist_data_missing],
             ['FALSE', 'TRUE'],
             show_hist=False, show_rug=False,
-            colors=['#e15759', '#4e79a7'] # Red/Blue color scheme
+            colors=['#e15759', '#4e79a7']
         )
         fig.add_trace(dist_fig['data'][0], row=1, col=1)
         fig.add_trace(dist_fig['data'][1], row=1, col=1)
-
-
-        # 5. Create the cumulative fraction plot (right subplot)
         fig.add_trace(go.Scatter(
-            x=ecdf_observed['log2_intensity'],
-            y=ecdf_observed['cumulative_fraction'],
-            mode='lines', name='FALSE',
-            line=dict(color='#e15759')
+            x=ecdf_observed['log2_intensity'], y=ecdf_observed['cumulative_fraction'],
+            mode='lines', name='FALSE', line=dict(color='#e15759')
         ), row=1, col=2)
         fig.add_trace(go.Scatter(
-            x=ecdf_missing['log2_intensity'],
-            y=ecdf_missing['cumulative_fraction'],
-            mode='lines', name='TRUE',
-            line=dict(color='#4e79a7')
+            x=ecdf_missing['log2_intensity'], y=ecdf_missing['cumulative_fraction'],
+            mode='lines', name='TRUE', line=dict(color='#4e79a7')
         ), row=1, col=2)
 
-        # 6. Final layout adjustments
+        # 4. Final layout (unchanged)
         fig.update_layout(
-            height=500,
-            showlegend=True,
-            legend_title_text='Missing values',
-            xaxis_title_text='log2 Intensity',
-            yaxis_title_text='Density',
-            xaxis2_title_text='log2 Intensity',
-            yaxis2_title_text='Cumulative fraction'
+            height=500, showlegend=True, legend_title_text='Missing values',
+            xaxis_title_text='log2 Intensity', yaxis_title_text='Density',
+            xaxis2_title_text='log2 Intensity', yaxis2_title_text='Cumulative fraction'
         )
-        # The distplot adds its own legend, which we need to hide for the first subplot
         fig.data[0].showlegend = False
         fig.data[1].showlegend = False
 
@@ -612,27 +578,33 @@ class QuantificationVisualizer:
     def _prepare_data_for_clustering(self):
         """
         Prepares the protein data for PCA and other clustering methods by imputing
-        missing values and scaling the data.
+        missing values and scaling the data. This version correctly handles
+        samples that may be entirely empty.
         """
         logger.info("Preparing data for clustering...")
         
-        # Select only the numeric sample columns
         numeric_df = self.protein_df[self.sample_cols].copy()
-        
-        # Replace 0 with NaN for proper imputation
         numeric_df.replace(0, np.nan, inplace=True)
+
+        # --- FIX: Drop columns that are entirely NaN before imputation ---
+        # This prevents a shape mismatch if some samples have no data.
+        numeric_df.dropna(axis=1, how='all', inplace=True)
+        
+        # Get the list of remaining valid samples
+        valid_samples = numeric_df.columns.tolist()
 
         # Impute missing values (e.g., with the mean of each protein)
         imputer = SimpleImputer(strategy='mean')
         imputed_data = imputer.fit_transform(numeric_df)
-        df_imputed = pd.DataFrame(imputed_data, columns=self.sample_cols, index=numeric_df.index)
+        df_imputed = pd.DataFrame(imputed_data, columns=valid_samples, index=numeric_df.index)
 
         # Scale the data (important for PCA)
         scaler = StandardScaler()
         # We transpose (.T) because PCA works on samples (rows) vs features (columns)
         scaled_data = scaler.fit_transform(df_imputed.T)
         
-        return scaled_data, df_imputed.columns # Return scaled data and sample names
+        # Return scaled data and the CORRECT list of sample names
+        return scaled_data, df_imputed.columns
 
     def plot_pca_by_annotation(self, color_by: str, symbol_by: str = None, 
                                pc_x: int = 1, pc_y: int = 2, show_labels: bool = False):

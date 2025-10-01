@@ -319,12 +319,12 @@ class ComparativeVisualizer:
 
     def plot_expression_violin(self, protein_list: list):
         """
-        Generates clean, faceted violin plots for a given list of proteins using
-        the logic from the original ProteinVisualization class for a cleaner look.
+        Generates clean, faceted violin plots for a given list of proteins.
+        This version is more robust against proteins with no valid data.
         """
         logger.info(f"Generating clean violin plots for {len(protein_list)} proteins.")
         
-        # 1. Get column names and prepare data (same as before)
+        # 1. Prepare data (unchanged)
         protein_id_col = self.column_config['protein_id']
         sample_id_col = self.column_config['sample_id']
         group_col = self.column_config['grouping']
@@ -344,64 +344,58 @@ class ComparativeVisualizer:
         plot_data = plot_data[plot_data['Intensity'] > 0].copy()
         plot_data['log2(Intensity)'] = np.log2(plot_data['Intensity'])
 
-        # 2. Set up subplots
-        num_proteins = len(protein_list)
-        cols = 2  # Arrange plots in 2 columns
+        # --- FIX: Loop over proteins actually present in the final data ---
+        # 2. Get the unique list of proteins that have valid data to plot
+        valid_proteins_to_plot = plot_data[protein_id_col].unique()
+        
+        if len(valid_proteins_to_plot) == 0:
+            raise ValueError("None of the selected proteins have valid intensity data to plot.")
+
+        # 3. Set up subplots based on the valid proteins
+        num_proteins = len(valid_proteins_to_plot)
+        cols = 2
         rows = (num_proteins + 1) // cols
         
-        # Use Gene Name for subplot titles if available
         subplot_titles = []
-        for protein in protein_list:
+        for protein in valid_proteins_to_plot:
+            # This is now safe because we know the protein exists in plot_data
             gene_name = plot_data[plot_data[protein_id_col] == protein]['Gene Name'].iloc[0]
             subplot_titles.append(gene_name or protein)
 
         fig = make_subplots(rows=rows, cols=cols, subplot_titles=subplot_titles)
 
-        # 3. Create the plot using a loop, similar to your original code
+        # 4. Create the plot using a loop (unchanged)
         colors = px.colors.qualitative.Plotly
         unique_groups = plot_data[group_col].unique()
         legend_added = []
 
-        for i, protein in enumerate(protein_list):
+        for i, protein in enumerate(valid_proteins_to_plot):
             row = (i // cols) + 1
             col = (i % cols) + 1
-            
             protein_data = plot_data[plot_data[protein_id_col] == protein]
             
             for j, group in enumerate(unique_groups):
                 group_data = protein_data[protein_data[group_col] == group]
                 show_legend = group not in legend_added
-                if show_legend:
-                    legend_added.append(group)
+                if show_legend: legend_added.append(group)
                 
                 fig.add_trace(go.Violin(
-                    x=group_data[group_col],
-                    y=group_data['log2(Intensity)'],
-                    name=group,
-                    box_visible=True,
-                    meanline_visible=True,
-                    points='all',
-                    pointpos=0,
-                    jitter=0.05,
-                    fillcolor=colors[j % len(colors)],
-                    line_color='black',
-                    showlegend=show_legend,
-                    legendgroup=group
+                    x=group_data[group_col], y=group_data['log2(Intensity)'], name=group,
+                    box_visible=True, meanline_visible=True, points='all', pointpos=0, jitter=0.05,
+                    fillcolor=colors[j % len(colors)], line_color='black',
+                    showlegend=show_legend, legendgroup=group
                 ), row=row, col=col)
 
-        # 4. Final layout adjustments
+        # 5. Final layout (unchanged)
         fig.update_layout(
-            title_text="Protein Expression Distribution",
-            height=400 * rows, # Dynamic height
-            violingap=0, 
-            violingroupgap=0, 
-            violinmode='overlay'
+            title_text="Protein Expression Distribution", height=400 * rows,
+            violingap=0, violingroupgap=0, violinmode='overlay'
         )
-        fig.update_traces(marker=dict(size=3)) # Smaller points
+        fig.update_traces(marker=dict(size=3))
         fig.update_yaxes(title_text="log2(Intensity)")
 
         return fig
-    
+
     def run_enrichment_analysis(self, gene_list: list, organism: str = "human"):
         """
         Perform comprehensive enrichment analysis for a list of genes using Enrichr.
