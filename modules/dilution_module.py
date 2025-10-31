@@ -41,7 +41,7 @@ class DilutionSeriesTab:
         visualizer = st.session_state.dilution_visualizer
         st.subheader("Dilution Series Visualizations")
 
-        overview_tab, analysis_tab, pca_tab = st.tabs(["📊 Data Overview", "📈 Trend Analysis", "🧬 PCA"])
+        overview_tab, analysis_tab, pca_tab, completeness_tab = st.tabs(["📊 Data Overview", "📈 Trend Analysis", "🧬 PCA", "✅ Completeness"])
 
         with overview_tab:
             # (This section remains the same)
@@ -59,7 +59,7 @@ class DilutionSeriesTab:
                 st.plotly_chart(fig_cv, use_container_width=True)
 
         with analysis_tab:
-            # --- UPDATED: Create nested tabs within the analysis tab ---
+            # (This section remains the same)
             trends_tab, heatmap_tab, ratio_tab = st.tabs(["Protein Trends", "Heatmap", "Relative Abundance"])
 
             with trends_tab:
@@ -88,7 +88,6 @@ class DilutionSeriesTab:
                 )
                 st.plotly_chart(fig_heatmap, use_container_width=True)
 
-            # --- NEW: Relative Abundance Ratio Tab ---
             with ratio_tab:
                 st.markdown("### Protein Abundance Ratios")
                 st.markdown("This plot shows the `Log2` intensity ratio of each concentration group relative to the lowest concentration. The median of the boxes should align with the dashed 'Expected' lines for accurate quantification.")
@@ -108,6 +107,68 @@ class DilutionSeriesTab:
             symbol_by = st.selectbox("Use symbols for", options=[None, 'Replicate', 'Group'], index=1)
             fig_pca = visualizer.plot_pca(color_by=color_by, symbol_by=symbol_by)
             st.plotly_chart(fig_pca, use_container_width=True)
+
+
+        with completeness_tab:
+            st.markdown("### Detection Completeness Analysis")
+            st.info(
+                "This view shows how many proteins, peptides, or precursors are detected "
+                "across your dilution series, with different quality thresholds."
+            )
+            
+            # --- UPDATED USER CONTROLS ---
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                # Select the level of analysis
+                analysis_level = st.selectbox(
+                    "Select Analysis Level",
+                    options=["Proteins", "Precursors", "Stripped Sequences"],
+                    help="Choose what to count: proteins, precursors, or unique peptide sequences"
+                )
+                
+                # Map user-friendly names to column names
+                level_mapping = {
+                    "Proteins": visualizer.protein_id_col,  # Usually 'Protein.Group'
+                    "Precursors": "Precursor.Id" if "Precursor.Id" in visualizer.protein_df.columns else visualizer.protein_id_col,
+                    "Stripped Sequences": "Stripped.Sequence" if "Stripped.Sequence" in visualizer.protein_df.columns else visualizer.protein_id_col
+                }
+                
+                selected_column = level_mapping[analysis_level]
+            
+            with col2:
+                # NEW: Add slider for CV threshold
+                cv_thresh = st.slider(
+                    "CV Threshold (%)", 0.0, 50.0, 20.0, 1.0,
+                    key="completeness_cv",
+                    help="The CV cutoff to define 'high-quality' data."
+                )
+                
+            with col3:
+                # Toggle for log scale
+                use_log = st.toggle(
+                    "Use logarithmic scale (left plot)",
+                    value=False,
+                    help="Enable log scale if counts vary widely"
+                )
+            
+            # --- UPDATED PLOT CALL ---
+            try:
+                with st.spinner(f"Calculating {analysis_level.lower()} completeness..."):
+                    fig = visualizer.plot_completeness_overview(
+                        identifier_col=selected_column,
+                        use_log_scale=use_log,
+                        cv_threshold=cv_thresh  # Pass the new CV threshold
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            except ValueError as e:
+                st.error(f"Could not generate plot: {e}")
+                st.info(
+                    f"The selected analysis level ('{analysis_level}') may not be available "
+                    f"in your dataset. Try a different level or check your data columns."
+                )
+            except Exception as e:
+                st.error(f"An unexpected error occurred: {e}")
 
     def render(self):
         st.header("Dilution Series Analysis")

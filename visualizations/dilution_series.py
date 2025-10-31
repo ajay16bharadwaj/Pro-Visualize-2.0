@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import logging
 import traceback
 from sklearn.preprocessing import StandardScaler
@@ -275,3 +277,199 @@ class DilutionSeriesVisualizer:
         except Exception as e:
             logger.error(f"Error in plot_relative_abundance_ratios: {e}", exc_info=True)
             raise
+
+    def plot_completeness_overview(self, identifier_col='Protein.Group', use_log_scale=False, cv_threshold=20.0):
+        """
+        Generates stacked bar charts, similar to the reference image, showing
+        detection completeness and reproducibility across groups.
+        
+        Args:
+            identifier_col (str): The column to analyze ('Protein.Group', 'Precursor.Id', etc.)
+            use_log_scale (bool): Whether to use log scale for the left y-axis (Count)
+            cv_threshold (float): The CV percentage to use as the quality cutoff.
+        
+        Returns:
+            A Plotly figure object with two subplots.
+        """
+        logger.info(f"Generating completeness overview for {identifier_col}...")
+        
+        # Validate the identifier column exists
+        if identifier_col not in self.protein_df.columns:
+            raise ValueError(f"Column '{identifier_col}' not found in protein data.")
+        
+        # Get the list of groups in order
+        groups = self.group_order
+        
+        # Prepare data structure for stacking
+        total_list = []
+        avg_list = []
+        complete_list = []
+        high_quality_list = []
+        group_labels = []
+        
+        # --- 1. Data Calculation Loop ---
+        for group in groups:
+            # Get samples for this group
+            group_samples = self.metadata_df[self.metadata_df['Group'] == group]['Sample'].tolist()
+            group_samples = [s for s in group_samples if s in self.protein_df.columns]
+            
+            if not group_samples:
+                continue
+            
+            n_samples = len(group_samples)
+            
+            # Subset data for this group
+            group_data = self.protein_df[[identifier_col] + group_samples].copy()
+            
+            # Replace zeros with NaN for proper counting
+            for col in group_samples:
+                group_data[col] = group_data[col].replace(0, np.nan)
+            
+            # Calculate metrics
+            # 1. Total unique identifiers detected (at least once)
+            total_detected = group_data[identifier_col][
+                group_data[group_samples].notna().any(axis=1)
+            ].nunique()
+            
+            # 2. Average identifiers per sample
+            avg_per_sample = group_data[group_samples].notna().sum().mean()
+            
+            # 3. Identifiers detected in ALL samples (complete detection)
+            complete_detection_mask = group_data[group_samples].notna().all(axis=1)
+            complete_detection_count = complete_detection_mask.sum()
+            
+            # 4. High-quality identifiers (complete detection + low CV)
+            complete_data = group_data[complete_detection_mask].copy()
+            
+            if len(complete_data) > 0:
+                # Calculate CV% for each row
+                complete_data['mean_intensity'] = complete_data[group_samples].mean(axis=1)
+                complete_data['std_intensity'] = complete_data[group_samples].std(axis=1)
+                complete_data['cv_percent'] = (
+                    complete_data['std_intensity'] / complete_data['mean_intensity']
+                ) * 100
+                
+                high_quality_count = (complete_data['cv_percent'] < cv_threshold).sum()
+            else:
+                high_quality_count = 0
+            
+            # Append to lists
+            group_labels.append(group)
+            total_list.append(int(total_detected))
+            avg_list.append(int(round(avg_per_sample)))
+            complete_list.append(int(complete_detection_count))
+            high_quality_list.append(int(high_quality_count))
+        
+        # --- 2. Calculate Differential Slices for Stacked Chart ---
+        # Convert to numpy arrays for element-wise, safe subtraction
+        total_arr = np.array(total_list)
+        avg_arr = np.array(avg_list)
+        complete_arr = np.array(complete_list)
+        high_quality_arr = np.array(high_quality_list)
+
+        # These are the actual values for each slice, ensuring no negative values
+        slice_green = high_quality_arr
+        slice_blue = np.maximum(0, complete_arr - high_quality_arr)
+        slice_pink = np.maximum(0, avg_arr - complete_arr)
+        slice_teal = np.maximum(0, total_arr - avg_arr)
+        
+        # --- 3. Create the Figure with Subplots ---
+        plot_name = identifier_col.replace('.', ' ').replace('_', ' ').title()
+        fig = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=(f"Total {plot_name}s", f"% {plot_name}s (to total)"),
+            horizontal_spacing=0.1
+        )
+        
+        # --- 4. Plot 1: Absolute Count Bar Chart (Left) ---
+        fig.add_trace(go.Bar(
+            name='Total Detected',
+            x=group_labels,
+            y=total_arr,
+            text=total_arr,
+            textposition='auto',
+            marker_color='#2ca02c', # Green
+            showlegend=False,
+            hovertemplate='<b>%{x}</b><br>Total Detected: %{y}<extra></extra>'
+        ), row=1, col=1)
+
+        # --- 5. Plot 2: Stacked 100% Bar Chart (Right) ---
+        # Add traces in order (bottom to top stacking)
+        
+        # Green Slice
+        fig.add_trace(go.Bar(
+            name=f'All Reps + CV<{cv_threshold}%', # Legend text from image
+            x=group_labels,
+            y=slice_green,
+            marker_color='#2ca02c', # Green
+            hovertemplate='<b>%{x}</b><br>High Quality: %{y} (%{customdata:.1f}%)<extra></extra>',
+            customdata=(slice_green / total_arr * 100),
+            legendgroup='stack'
+        ), row=1, col=2)
+        
+        # Blue Slice
+        fig.add_trace(go.Bar(
+            name='All Reps', # Legend text from image
+            x=group_labels,
+            y=slice_blue,
+            marker_color='#1f77b4', # Blue
+            hovertemplate='<b>%{x}</b><br>Complete (High CV): %{y} (%{customdata:.1f}%)<extra></extra>',
+            customdata=(slice_blue / total_arr * 100),
+            legendgroup='stack'
+        ), row=1, col=2)
+        
+        # Pink/Orange Slice (from your original colors)
+        fig.add_trace(go.Bar(
+            name='Average/Sample', # Legend text from image
+            x=group_labels,
+            y=slice_pink,
+            marker_color='#ff7f0e', # Orange (from your original code)
+            hovertemplate='<b>%{x}</b><br>Incomplete (Avg): %{y} (%{customdata:.1f}%)<extra></extra>',
+            customdata=(slice_pink / total_arr * 100),
+            legendgroup='stack'
+        ), row=1, col=2)
+        
+        # Teal/Red Slice (from your original colors)
+        fig.add_trace(go.Bar(
+            name='Total', # Legend text from image
+            x=group_labels,
+            y=slice_teal,
+            marker_color='#d62728', # Red (from your original code)
+            hovertemplate='<b>%{x}</b><br>Incomplete (Low Freq): %{y} (%{customdata:.1f}%)<extra></extra>',
+            customdata=(slice_teal / total_arr * 100),
+            legendgroup='stack'
+        ), row=1, col=2)
+
+        # --- 6. Update Layouts ---
+        fig.update_layout(
+            height=500,
+            template='plotly_white',
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02,
+                xanchor="right", x=1
+            ),
+            # Plot 1 (Left)
+            yaxis=dict(
+                title='Count' if not use_log_scale else 'Count (log scale)',
+                type='log' if use_log_scale else 'linear'
+            ),
+            xaxis=dict(title='Concentration Group'),
+            
+            # Plot 2 (Right)
+            barmode='stack',
+            barnorm='percent', # This makes it a 100% stacked chart
+            yaxis2=dict(title='% (to total)'),
+            xaxis2=dict(title='Concentration Group')
+        )
+
+        # Add text labels inside the % chart
+        fig.for_each_trace(
+            lambda t: t.update(
+                texttemplate='%{customdata:.0f}%',
+                textposition='inside',
+                textfont=dict(size=12, color='white')
+            ) if t.legendgroup == 'stack' else (),
+        )
+        
+        logger.info("Completeness overview plot generated successfully.")
+        return fig
