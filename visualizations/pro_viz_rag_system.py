@@ -44,7 +44,7 @@ def simple_tokenizer(text: str) -> list[str]:
 Settings.llm = None
 Settings.embed_model = None
 
-os.environ["GOOGLE_API_KEY"] = "AIzaSyCG0WdNRLMb7gQjP1U3WtIxc_rnUZD-3tI"
+os.environ["GOOGLE_API_KEY"] = ""
 
 # --- CONFIGURE LLAMA-INDEX SETTINGS ---
 try:
