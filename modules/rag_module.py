@@ -131,22 +131,65 @@ class RagTab:
         if rag_system.query_system:
             st.markdown(f"**Ready!** You are now chatting with `{rag_system.dataset_manager.active_dataset}`.")
             
+            # --- 1. ADD THE TOGGLE ---
+            show_details = st.toggle("Show Query Details ⚙️", key="rag_show_details")
+
+            # --- 2. MODIFY HISTORY RENDERING ---
             for message in st.session_state.rag_chat_history:
                 with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
-            
+                    
+                    if message["role"] == "user":
+                        # User message is just a string
+                        st.markdown(message["content"])
+                    
+                    else: # Role is "assistant"
+                        # Assistant message is now a dictionary
+                        response_dict = message["content"]
+                        
+                        # A. Always display the main answer
+                        st.markdown(response_dict.get('answer', 'Error: No answer found.'))
+                        
+                        # B. Conditionally display the details
+                        if show_details:
+                            # Create a clean metadata dict to show
+                            details_to_show = response_dict.copy()
+                            
+                            # We don't need to show the 'answer' key again
+                            details_to_show.pop('answer', None) 
+                            
+                            # Format the routing type for the title
+                            route_type = details_to_show.pop('type', 'unknown').upper()
+                            
+                            with st.expander(f"**Query Route:** `{route_type}`", expanded=False):
+                                if route_type == 'QUANTITATIVE':
+                                    st.info("💡 This query was answered by the **Quantitative Handler** (the 'calculator')")
+                                elif route_type == 'SEMANTIC':
+                                    st.info("💡 This query was answered by the **Semantic RAG Engine** (the 'brain').")
+                                elif route_type == 'LITERATURE_INTEGRATED':
+                                    st.info("💡 This query was answered by the **Semantic RAG Engine** and then **cross-referenced with the Literature Index**.")
+                                
+                                # Show the rest of the metadata
+                                st.json(details_to_show)
+
+            # --- 3. MODIFY INPUT PROCESSING ---
             if prompt := st.chat_input("Ask a question about your data..."):
+                # Add user message (this is fine, it's just a string)
                 st.session_state.rag_chat_history.append({"role": "user", "content": prompt})
                 with st.chat_message("user"):
                     st.markdown(prompt)
                 
                 with st.chat_message("assistant"):
                     with st.spinner("Thinking..."):
+                        # Get the *full dictionary* from the backend
                         response_dict = rag_system.query(prompt)
+                        
+                        # Display just the answer part
                         response_text = response_dict.get('answer', 'Sorry, I encountered an error.')
                         st.markdown(response_text)
                 
-                st.session_state.rag_chat_history.append({"role": "assistant", "content": response_text})
+                # Store the *entire dictionary* in history, not just the text
+                st.session_state.rag_chat_history.append({"role": "assistant", "content": response_dict})
+        
         else:
             st.info("Please select and activate a dataset to begin chatting.")
 

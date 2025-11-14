@@ -41,10 +41,10 @@ def simple_tokenizer(text: str) -> list[str]:
 
 # We will set these to None initially.
 # They will be configured by the UI.
-Settings.llm = None
-Settings.embed_model = None
+#Settings.llm = None
+#Settings.embed_model = None
 
-os.environ["GOOGLE_API_KEY"] = ""
+os.environ["GOOGLE_API_KEY"] = "AIzaSyCG0WdNRLMb7gQjP1U3WtIxc_rnUZD-3tI"
 
 # --- CONFIGURE LLAMA-INDEX SETTINGS ---
 try:
@@ -67,6 +67,8 @@ try:
 except Exception as e:
     logging.error(f"Failed to configure Google GenAI: {e}")
     st.error(f"CRITICAL ERROR: Failed to configure Google GenAI. Check your API key. Error: {e}")
+    raise e  # <--- ADD THIS LINE
+# ----------------------------------------
 # ----------------------------------------
 
 
