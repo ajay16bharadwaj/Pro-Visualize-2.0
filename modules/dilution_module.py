@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 import logging
 import plotly.express as px
+import plotly.graph_objects as go
 from visualizations.dilution_series import DilutionSeriesVisualizer
 from utils.helpers import handle_plotting_errors
 from utils.plot_manager import PlotManager
 
 logger = logging.getLogger(__name__)
-
 class DilutionSeriesTab:
     # Define all plot keys used in this module for easy global updates
     PLOT_KEYS = [
@@ -47,12 +47,10 @@ class DilutionSeriesTab:
         Renders controls for global plot styling inside an expander.
         Includes an 'Apply' button to update existing plots immediately.
         """
-        # --- MOVED FROM SIDEBAR TO MAIN EXPANDER ---
         with st.expander("🎨 Global Plot Settings (Colors & Theme)", expanded=False):
             c1, c2 = st.columns(2)
             
             with c1:
-                # 1. Theme / Background
                 theme_options = {
                     "Standard White": "plotly_white",
                     "Dark Mode": "plotly_dark",
@@ -60,12 +58,14 @@ class DilutionSeriesTab:
                     "GGPlot Style": "ggplot2",
                     "Seaborn Style": "seaborn"
                 }
-                # Use a key to persist selection
-                selected_theme_label = st.selectbox("Plot Theme", list(theme_options.keys()), key="dilution_global_theme_select")
+                selected_theme_label = st.selectbox(
+                    "Plot Theme", 
+                    list(theme_options.keys()), 
+                    key="dilution_global_theme_select"
+                )
                 selected_template = theme_options[selected_theme_label]
 
             with c2:
-                # 2. Color Palette
                 palette_mode = st.radio(
                     "Palette Type", 
                     ["Auto", "Colorblind Safe", "Custom"], 
@@ -82,40 +82,39 @@ class DilutionSeriesTab:
                 for i, group in enumerate(groups):
                     color_map[group] = safe_colors[i % len(safe_colors)]
                 st.caption("✅ Using high-contrast, colorblind-safe colors.")
-                
+                    
             elif palette_mode == "Custom":
                 st.markdown("**Customize Group Colors:**")
                 cols = st.columns(4)
                 for i, group in enumerate(groups):
                     default_c = px.colors.qualitative.Safe[i % len(px.colors.qualitative.Safe)]
                     with cols[i % 4]: 
-                         # Add unique key for each color picker
-                         color_map[group] = st.color_picker(f"{group}", value=default_c, key=f"dilution_color_{group}")
-            
+                        color_map[group] = st.color_picker(
+                            f"{group}", 
+                            value=default_c, 
+                            key=f"dilution_color_{group}"
+                        )
             else: # Auto
-                 color_map = None
+                color_map = None
 
             st.markdown("---")
             
-            # --- THE APPLY BUTTON ---
+            # ✅ UPDATED APPLY BUTTON LOGIC
             if st.button("Apply Settings to All Plots", type="primary", use_container_width=True):
-                # Iterate through all known plot keys and update their layout template
+                # Instead of trying to update figures, clear them to force regeneration
                 count = 0
                 for key in self.PLOT_KEYS:
                     fig_key = f"{key}_fig"
-                    # Check if a figure exists in session state
                     if fig_key in st.session_state and st.session_state[fig_key] is not None:
-                        # Update the template (background/fonts)
-                        st.session_state[fig_key].update_layout(template=selected_template)
+                        # Clear the cached figure
+                        st.session_state[fig_key] = None
                         count += 1
                 
                 if count > 0:
-                    st.success(f"Updated theme for {count} active plots!")
+                    st.success(f"Settings applied! Plots will regenerate automatically.")
                 else:
                     st.info("Settings saved. Generate a plot to see changes.")
                 
-                # Note: We cannot easily update 'color_discrete_map' on existing figures without 
-                # re-generating the data traces. We force a rerun to refresh the UI.
                 st.rerun()
 
         # Return the kwargs dictionary for *future* plot generations
@@ -124,6 +123,8 @@ class DilutionSeriesTab:
             global_kwargs["color_discrete_map"] = color_map
             
         return global_kwargs
+    
+
 
     @handle_plotting_errors
     def _display_plots(self):

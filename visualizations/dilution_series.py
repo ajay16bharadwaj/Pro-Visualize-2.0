@@ -101,6 +101,9 @@ class DilutionSeriesVisualizer:
 
     def plot_intensity_distribution(self, plot_type='box', **kwargs):
         """Generates Plot 1: Intensity Distribution."""
+        # Extract template to persist it
+        template = kwargs.get('template', 'plotly_white')
+        
         plot_data = self._get_long_data(log_transform=True)
         
         plot_args = {
@@ -109,20 +112,21 @@ class DilutionSeriesVisualizer:
             "category_orders": {'Group': self.group_order},
             "labels": {'Group': 'Concentration Group', 'Log2Intensity': 'Log2(Intensity)'}
         }
-        # Update with user kwargs (template, color_discrete_map, etc.)
         plot_args.update(kwargs)
 
         if plot_type == 'violin':
-            # Explicitly add box=True for violin plots
             fig = px.violin(plot_data, **plot_args, box=True)
         else:
             fig = px.box(plot_data, **plot_args)
             
-        fig.update_layout(showlegend=False)
+        # Explicitly pass template back to update_layout
+        fig.update_layout(showlegend=False, template=template)
         return fig
 
     def plot_protein_trends(self, proteins_to_plot=None, n_top_proteins=5, **kwargs):
         """Generates Plot 3: Individual Protein Trends."""
+        template = kwargs.get('template', 'plotly_white')
+        
         mean_intensity_stats = self._get_mean_log2_stats()
         if proteins_to_plot:
             plot_data = mean_intensity_stats[mean_intensity_stats[self.protein_id_col].isin(proteins_to_plot)]
@@ -133,21 +137,24 @@ class DilutionSeriesVisualizer:
 
         color_col = self.gene_col if self.gene_col and not plot_data[self.gene_col].isnull().all() else self.protein_id_col
         
-        # Pass kwargs to support global styling
         fig = px.line(plot_data, x='Log2Concentration', y='Log2Intensity', color=color_col, markers=True, **kwargs)
         
         conc_values = sorted(plot_data['Concentration'].unique())
         log2_conc_values = np.log2(conc_values)
+        
         fig.update_layout(
             title="Protein Intensity Trend across Dilution Series",
             xaxis=dict(tickmode='array', tickvals=log2_conc_values, ticktext=[str(c) for c in conc_values]),
             xaxis_title="Concentration (ng)",
-            yaxis_title="Mean Log2(Intensity)"
+            yaxis_title="Mean Log2(Intensity)",
+            template=template # Apply template
         )
         return fig
 
     def plot_heatmap_trends(self, min_concentrations_present=4, max_proteins_to_plot=500, apply_zscore=True, **kwargs):
         """Generates Plot 4: Heatmap of Trends."""
+        template = kwargs.get('template', 'plotly_white')
+        
         mean_intensity_stats = self._get_mean_log2_stats()
         heatmap_matrix = mean_intensity_stats.pivot(index=self.protein_id_col, columns='Concentration', values='Log2Intensity').sort_index(axis=1)
         heatmap_filtered = heatmap_matrix.dropna(thresh=min_concentrations_present)
@@ -160,12 +167,10 @@ class DilutionSeriesVisualizer:
         if apply_zscore:
             matrix_for_plot = heatmap_filtered.apply(lambda x: zscore(x.dropna()), axis=1, result_type='expand').fillna(0)
             color_axis_label = "Z-Score (Log2 Intensity)"
-            # Use a diverging blue-to-red scale for Z-scores
             color_scale = 'RdBu_r'
         else:
             matrix_for_plot = heatmap_filtered.fillna(heatmap_filtered.min().min())
             color_axis_label = "Mean Log2 Intensity"
-            # Default color scale for non-normalized data
             color_scale = 'Viridis'
 
         fig = px.imshow(matrix_for_plot, aspect="auto",
@@ -174,11 +179,17 @@ class DilutionSeriesVisualizer:
                         color_continuous_scale=color_scale,
                         **kwargs)
 
-        fig.update_layout(yaxis={'visible': False, 'showticklabels': False})
+        fig.update_layout(
+            yaxis={'visible': False, 'showticklabels': False},
+            xaxis={'side': "bottom", 'type': 'category'},
+            template=template
+        )
         fig.update_xaxes(side="bottom", type='category')
         return fig
 
     def plot_cv_distribution(self, y_limit_percentile=98.0, **kwargs):
+        template = kwargs.get('template', 'plotly_white')
+        
         cv_stats_plot = self._get_cv_stats()
         fig = px.box(cv_stats_plot, x='Group', y='CV_Percent', color='Group', title="Protein CV% Distribution",
                      category_orders={'Group': self.group_order}, 
@@ -186,10 +197,13 @@ class DilutionSeriesVisualizer:
                      **kwargs)
         upper_limit = np.percentile(cv_stats_plot['CV_Percent'].dropna(), y_limit_percentile)
         fig.update_yaxes(range=[0, upper_limit * 1.1])
-        fig.update_layout(showlegend=False)
+        
+        # Explicitly pass template
+        fig.update_layout(showlegend=False, template=template)
         return fig
         
     def plot_protein_counts_per_sample(self, **kwargs):
+        # Note: This function doesn't call update_layout, so standard kwargs passing works fine.
         protein_counts = self.protein_df[self.sample_cols].notna().sum().reset_index()
         protein_counts.columns = ['Sample', 'ProteinCount']
         plot_data = pd.merge(protein_counts, self.metadata_df, on='Sample', how='left')
@@ -202,6 +216,7 @@ class DilutionSeriesVisualizer:
         return fig
 
     def plot_pca(self, color_by='Group', symbol_by='Replicate', **kwargs):
+        # Note: This function doesn't call update_layout, so standard kwargs passing works fine.
         df_log2_wide = np.log2(self.protein_df[self.sample_cols].replace(0, np.nan))
         df_imputed = df_log2_wide.dropna(axis=0)
         df_pca_input = df_imputed.transpose()
@@ -228,6 +243,7 @@ class DilutionSeriesVisualizer:
         Generates a box plot of protein log2 intensity ratios relative to the
         mean of the lowest concentration group.
         """
+        template = kwargs.get('template', 'plotly_white')
         logger.info("Generating Log2 Relative Abundance Ratio plot...")
         try:
             mean_log2_stats = self._get_mean_log2_stats()
@@ -272,7 +288,9 @@ class DilutionSeriesVisualizer:
                                   annotation_position="bottom right")
             
             fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
-            fig.update_layout(showlegend=False)
+            
+            # Explicitly pass template
+            fig.update_layout(showlegend=False, template=template)
             return fig
         except Exception as e:
             logger.error(f"Error in plot_relative_abundance_ratios: {e}", exc_info=True)
@@ -280,16 +298,14 @@ class DilutionSeriesVisualizer:
 
     def plot_completeness_overview(self, identifier_col='Protein.Group', use_log_scale=False, cv_threshold=20.0, **kwargs):
         """
-        Generates stacked bar charts, similar to the reference image, showing
-        detection completeness and reproducibility across groups.
+        Generates stacked bar charts showing detection completeness and reproducibility.
         """
         logger.info(f"Generating completeness overview for {identifier_col}...")
         
-        # Validate the identifier column exists
         if identifier_col not in self.protein_df.columns:
             raise ValueError(f"Column '{identifier_col}' not found in protein data.")
         
-        # Extract template specifically since go.Figure doesn't use kwargs automatically like px
+        # Extract template explicitly
         template = kwargs.get('template', 'plotly_white')
 
         # Get the list of groups in order
@@ -401,7 +417,7 @@ class DilutionSeriesVisualizer:
         # --- 6. Update Layouts ---
         fig.update_layout(
             height=500,
-            template=template, # Apply the global template here
+            template=template, # Apply template here
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             yaxis=dict(title='Count' if not use_log_scale else 'Count (log scale)', type='log' if use_log_scale else 'linear'),
             xaxis=dict(title='Concentration Group'),
