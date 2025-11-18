@@ -224,16 +224,48 @@ class DilutionSeriesTab:
                 st.markdown("Shows `Log2` intensity ratio relative to lowest concentration.")
                 
                 with st.expander("⚙️ Configuration", expanded=True):
-                    show_lines = st.toggle("Show expected ratio lines", value=True, key="dilution_ratio_lines")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        show_lines = st.toggle(
+                            "Show expected ratio lines", 
+                            value=True, 
+                            key="dilution_ratio_lines"
+                        )
+                    
+                    with col2:
+                        show_deviations = st.toggle(
+                            "Show deviation metrics",
+                            value=True,
+                            key="dilution_ratio_deviations",
+                            help="Display mean deviation from expected with ±SD error bars"
+                        )
                     
                     ratio_manager = PlotManager("dilution_ratios")
                     ratio_manager.render_generate_button(
                         visualizer.plot_relative_abundance_ratios,
                         add_expected_lines=show_lines,
+                        show_deviations=show_deviations,  # NEW
                         points=False,
                         **global_plot_kwargs
                     )
                 ratio_manager.render_plot_and_editor()
+                # NEW: Add interpretation guide
+                if show_deviations:
+                    with st.expander("📊 Interpreting Deviation Metrics", expanded=False):
+                        st.markdown("""
+                        The diamond markers show the **mean observed ratio** for each group, with error bars representing ±1 standard deviation.
+                        
+                        **Color Coding:**
+                        - 🟢 **Green:** Mean deviation < 0.2 (Excellent agreement with expected)
+                        - 🟠 **Orange:** Mean deviation 0.2-0.5 (Moderate deviation)
+                        - 🔴 **Red:** Mean deviation ≥ 0.5 (Poor linearity)
+                        
+                        **Interpretation:**
+                        - Small error bars indicate consistent protein responses
+                        - Large error bars suggest high variability between proteins
+                        - Markers close to expected lines (gray dashed) indicate good dilution linearity
+                        """)
             
         # --- TAB 3: PCA ---
         with pca_tab:
@@ -290,6 +322,7 @@ class DilutionSeriesTab:
                 )
             
             comp_manager.render_plot_and_editor()
+
 
     def render(self):
         st.header("Dilution Series Analysis")

@@ -98,6 +98,25 @@ class DilutionSeriesVisualizer:
             mean_stats['Log2Concentration'] = np.log2(mean_stats['Concentration'])
             self._mean_log2_stats_df = mean_stats
         return self._mean_log2_stats_df
+    
+    # Add this function right after the logger definition, before the class
+    def _classify_deviation_color(self, deviation: float) -> str:
+        """
+        Color codes deviation (Bias) magnitude for plot coloring.
+        
+        Args:
+            deviation (float): Mean deviation value (Bias).
+            
+        Returns:
+            str: Color code.
+        """
+        abs_dev = abs(deviation)
+        if abs_dev < 0.2:
+            return '#2ca02c'  # Green - excellent
+        elif abs_dev < 0.5:
+            return '#ff7f0e'  # Orange - moderate
+        else:
+            return '#d62728'  # Red - poor
 
     def plot_intensity_distribution(self, plot_type='box', **kwargs):
         """Generates Plot 1: Intensity Distribution."""
@@ -244,10 +263,12 @@ class DilutionSeriesVisualizer:
                          title="PCA of Samples", labels={'PC1': pc1_label, 'PC2': pc2_label}, **kwargs)
         return fig
     
-    def plot_relative_abundance_ratios(self, add_expected_lines=True, **kwargs):
+    def plot_relative_abundance_ratios(self, add_expected_lines=True, 
+                                       show_deviations=True, **kwargs):
         """
         Generates a box plot of protein log2 intensity ratios relative to the
-        mean of the lowest concentration group.
+        mean of the lowest concentration group, with an optional overlay
+        showing the mean observed ratio and standard deviation.
         """
         logger.info("Generating Log2 Relative Abundance Ratio plot...")
         try:
@@ -259,11 +280,14 @@ class DilutionSeriesVisualizer:
             if min_concentration <= 0:
                 raise ValueError("Minimum concentration must be positive.")
 
+            # Calculate base intensity (lowest concentration) for each protein
             base_log2_map = mean_log2_stats[mean_log2_stats['Concentration'] == min_concentration].groupby(self.protein_id_col)['Log2Intensity'].first().dropna()
             
             ratio_data = mean_log2_stats.copy()
             ratio_data['BaseMeanLog2Intensity'] = ratio_data[self.protein_id_col].map(base_log2_map)
             ratio_data.dropna(subset=['BaseMeanLog2Intensity', 'Log2Intensity'], inplace=True)
+            
+            # Filter out the reference group (ratio is always 0)
             ratio_data = ratio_data[ratio_data['Concentration'] > min_concentration].copy()
 
             if ratio_data.empty:
@@ -271,12 +295,18 @@ class DilutionSeriesVisualizer:
 
             ratio_data['Log2Ratio'] = ratio_data['Log2Intensity'] - ratio_data['BaseMeanLog2Intensity']
             
+            # Merge group info
             group_info = self.metadata_df[['Concentration', 'Group']].drop_duplicates()
             ratio_data = pd.merge(ratio_data, group_info, on='Concentration', how='left').dropna(subset=['Group'])
 
+            # Calculate Expected Ratio (Needed for Bias/Deviation, even if lines are hidden)
+            ratio_data['ExpectedLog2Ratio'] = np.log2(ratio_data['Concentration'] / min_concentration)
+            
+            # Define Order
             base_group_name = self.metadata_df.loc[self.metadata_df['Concentration'] == min_concentration, 'Group'].unique()[0]
             groups_to_plot_order = [g for g in self.group_order if g != base_group_name and g in ratio_data['Group'].unique()]
 
+            # --- Plotting (Box Plot) ---
             fig = px.box(ratio_data, x='Group', y='Log2Ratio', color='Group',
                          title="Protein Log2 Abundance Ratio vs. Lowest Concentration",
                          category_orders={'Group': groups_to_plot_order},
@@ -284,16 +314,87 @@ class DilutionSeriesVisualizer:
                                  'Log2Ratio': f'Log2(Intensity Ratio vs {min_concentration}ng)'},
                          **kwargs)
 
+            # --- 1. Add Expected Lines ---
             if add_expected_lines:
-                ratio_data['ExpectedLog2Ratio'] = np.log2(ratio_data['Concentration'] / min_concentration)
                 expected_ratios_df = ratio_data[['Group', 'ExpectedLog2Ratio']].drop_duplicates()
                 for _, row in expected_ratios_df.iterrows():
                     fig.add_hline(y=row['ExpectedLog2Ratio'], line_dash="dash", line_color="grey",
-                                  annotation_text=f"Expected (Log2: {row['ExpectedLog2Ratio']:.2f})",
+                                  annotation_text=f"Exp: {row['ExpectedLog2Ratio']:.2f}",
                                   annotation_position="bottom right")
+
+            # --- 2. Calculate Deviation Metrics ---
+            group_stats = None
+            if show_deviations:
+                # Calculate the Deviation column (needed for MeanDeviation aggregation)
+                ratio_data['Deviation'] = ratio_data['Log2Ratio'] - ratio_data['ExpectedLog2Ratio']
+                
+                # Calculate group-level statistics
+                group_stats = ratio_data.groupby('Group').agg(
+                    # MeanDeviation (Bias) = Mean of the deviation
+                    MeanDeviation=('Deviation', 'mean'),
+                    # StdDeviation (Precision) = SD of the Observed Ratio (CORRECTED)
+                    StdDeviation=('Log2Ratio', 'std'), 
+                    Count=('Log2Ratio', 'count'),
+                    MeanObserved=('Log2Ratio', 'mean'),
+                    Expected=('ExpectedLog2Ratio', 'first')
+                ).reindex(groups_to_plot_order).reset_index()
+                
+                # Add color coding
+                group_stats['Color'] = group_stats['MeanDeviation'].apply(self._classify_deviation_color)
+                
+                logger.info(f"Calculated deviation metrics for {len(group_stats)} groups.")
             
             fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
-            fig.update_layout(showlegend=False)
+
+            # --- 3. Add Deviation Overlay ---
+            if show_deviations and group_stats is not None:
+                # Add scatter plot with error bars
+                fig.add_trace(go.Scatter(
+                    x=group_stats['Group'],
+                    y=group_stats['MeanObserved'],
+                    mode='markers',
+                    marker=dict(
+                        size=14,
+                        symbol='diamond',
+                        color=group_stats['Color'],
+                        line=dict(width=2, color='black')
+                    ),
+                    error_y=dict(
+                        type='data',
+                        array=group_stats['StdDeviation'],
+                        visible=True,
+                        color='rgba(0,0,0,0.5)',
+                        thickness=2,
+                        width=6
+                    ),
+                    name='Mean Observed ± SD',
+                    showlegend=True,
+                    hovertemplate=(
+                        '<b>%{x}</b><br>'
+                        'Mean Observed: %{y:.3f}<br>'
+                        'Bias (Mean Dev): %{customdata[0]:+.3f}<br>'
+                        'SD: %{customdata[1]:.3f}<br>'
+                        '<extra></extra>'
+                    ),
+                    customdata=group_stats[['MeanDeviation', 'StdDeviation']].values
+                ))
+                
+                # Add Legend for Deviation Color Scale
+                legend_group = 'Deviation Classification'
+                # Note: Using the hex codes provided in the front-end code
+                fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name='Low Bias (Abs. Dev. $\leq 0.2$)', 
+                                         marker=dict(size=10, symbol='diamond', color='#2ca02c', line=dict(width=2, color='black')), 
+                                         legendgroup=legend_group, showlegend=True))
+                fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name='Moderate Bias (Abs. Dev. $\leq 0.5$)', 
+                                         marker=dict(size=10, symbol='diamond', color='#ff7f0e', line=dict(width=2, color='black')), 
+                                         legendgroup=legend_group, showlegend=True))
+                fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name='High Bias (Abs. Dev. $> 0.5$)', 
+                                         marker=dict(size=10, symbol='diamond', color='#d62728', line=dict(width=2, color='black')), 
+                                         legendgroup=legend_group, showlegend=True))
+                
+                logger.info("Added deviation overlay to plot.")
+            
+            fig.update_layout(showlegend=True)
             return fig
         except Exception as e:
             logger.error(f"Error in plot_relative_abundance_ratios: {e}", exc_info=True)
