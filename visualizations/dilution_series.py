@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 import logging
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-from scipy.stats import zscore
+from scipy.stats import zscore, linregress  
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +101,6 @@ class DilutionSeriesVisualizer:
 
     def plot_intensity_distribution(self, plot_type='box', **kwargs):
         """Generates Plot 1: Intensity Distribution."""
-        # Extract template to persist it
-        template = kwargs.get('template', 'plotly_white')
-        
         plot_data = self._get_long_data(log_transform=True)
         
         plot_args = {
@@ -112,19 +109,21 @@ class DilutionSeriesVisualizer:
             "category_orders": {'Group': self.group_order},
             "labels": {'Group': 'Concentration Group', 'Log2Intensity': 'Log2(Intensity)'}
         }
+        # Update with user kwargs (template, color_discrete_map, etc.)
         plot_args.update(kwargs)
 
         if plot_type == 'violin':
+            # Explicitly add box=True for violin plots
             fig = px.violin(plot_data, **plot_args, box=True)
         else:
             fig = px.box(plot_data, **plot_args)
             
-        # Explicitly pass template back to update_layout
-        fig.update_layout(showlegend=False, template=template)
+        fig.update_layout(showlegend=False)
         return fig
 
     def plot_protein_trends(self, proteins_to_plot=None, n_top_proteins=5, **kwargs):
-        """Generates Plot 3: Individual Protein Trends."""
+        """Generates Plot 3: Individual Protein Trends with R² values."""
+        # Extract template at the start
         template = kwargs.get('template', 'plotly_white')
         
         mean_intensity_stats = self._get_mean_log2_stats()
@@ -139,22 +138,37 @@ class DilutionSeriesVisualizer:
         
         fig = px.line(plot_data, x='Log2Concentration', y='Log2Intensity', color=color_col, markers=True, **kwargs)
         
+        # Calculate R2 and update legend names
+        for trace in fig.data:
+            trace_data = plot_data[plot_data[color_col] == trace.name]
+            clean_data = trace_data.dropna(subset=['Log2Concentration', 'Log2Intensity'])
+            
+            if len(clean_data) >= 2:  # Consider changing to >= 3 for more reliable R²
+                try:
+                    slope, intercept, r_value, p_value, std_err = linregress(
+                        clean_data['Log2Concentration'], 
+                        clean_data['Log2Intensity']
+                    )
+                    r_squared = r_value ** 2
+                    trace.name = f"{trace.name} (R²={r_squared:.3f})"
+                except Exception:
+                    pass
+
         conc_values = sorted(plot_data['Concentration'].unique())
         log2_conc_values = np.log2(conc_values)
         
+        # ✅ FIX: Add template parameter
         fig.update_layout(
             title="Protein Intensity Trend across Dilution Series",
             xaxis=dict(tickmode='array', tickvals=log2_conc_values, ticktext=[str(c) for c in conc_values]),
             xaxis_title="Concentration (ng)",
             yaxis_title="Mean Log2(Intensity)",
-            template=template # Apply template
+            template=template  # ← ADD THIS
         )
         return fig
 
     def plot_heatmap_trends(self, min_concentrations_present=4, max_proteins_to_plot=500, apply_zscore=True, **kwargs):
         """Generates Plot 4: Heatmap of Trends."""
-        template = kwargs.get('template', 'plotly_white')
-        
         mean_intensity_stats = self._get_mean_log2_stats()
         heatmap_matrix = mean_intensity_stats.pivot(index=self.protein_id_col, columns='Concentration', values='Log2Intensity').sort_index(axis=1)
         heatmap_filtered = heatmap_matrix.dropna(thresh=min_concentrations_present)
@@ -167,10 +181,12 @@ class DilutionSeriesVisualizer:
         if apply_zscore:
             matrix_for_plot = heatmap_filtered.apply(lambda x: zscore(x.dropna()), axis=1, result_type='expand').fillna(0)
             color_axis_label = "Z-Score (Log2 Intensity)"
+            # Use a diverging blue-to-red scale for Z-scores
             color_scale = 'RdBu_r'
         else:
             matrix_for_plot = heatmap_filtered.fillna(heatmap_filtered.min().min())
             color_axis_label = "Mean Log2 Intensity"
+            # Default color scale for non-normalized data
             color_scale = 'Viridis'
 
         fig = px.imshow(matrix_for_plot, aspect="auto",
@@ -179,17 +195,11 @@ class DilutionSeriesVisualizer:
                         color_continuous_scale=color_scale,
                         **kwargs)
 
-        fig.update_layout(
-            yaxis={'visible': False, 'showticklabels': False},
-            xaxis={'side': "bottom", 'type': 'category'},
-            template=template
-        )
+        fig.update_layout(yaxis={'visible': False, 'showticklabels': False})
         fig.update_xaxes(side="bottom", type='category')
         return fig
 
     def plot_cv_distribution(self, y_limit_percentile=98.0, **kwargs):
-        template = kwargs.get('template', 'plotly_white')
-        
         cv_stats_plot = self._get_cv_stats()
         fig = px.box(cv_stats_plot, x='Group', y='CV_Percent', color='Group', title="Protein CV% Distribution",
                      category_orders={'Group': self.group_order}, 
@@ -197,13 +207,10 @@ class DilutionSeriesVisualizer:
                      **kwargs)
         upper_limit = np.percentile(cv_stats_plot['CV_Percent'].dropna(), y_limit_percentile)
         fig.update_yaxes(range=[0, upper_limit * 1.1])
-        
-        # Explicitly pass template
-        fig.update_layout(showlegend=False, template=template)
+        fig.update_layout(showlegend=False)
         return fig
         
     def plot_protein_counts_per_sample(self, **kwargs):
-        # Note: This function doesn't call update_layout, so standard kwargs passing works fine.
         protein_counts = self.protein_df[self.sample_cols].notna().sum().reset_index()
         protein_counts.columns = ['Sample', 'ProteinCount']
         plot_data = pd.merge(protein_counts, self.metadata_df, on='Sample', how='left')
@@ -216,7 +223,6 @@ class DilutionSeriesVisualizer:
         return fig
 
     def plot_pca(self, color_by='Group', symbol_by='Replicate', **kwargs):
-        # Note: This function doesn't call update_layout, so standard kwargs passing works fine.
         df_log2_wide = np.log2(self.protein_df[self.sample_cols].replace(0, np.nan))
         df_imputed = df_log2_wide.dropna(axis=0)
         df_pca_input = df_imputed.transpose()
@@ -243,7 +249,6 @@ class DilutionSeriesVisualizer:
         Generates a box plot of protein log2 intensity ratios relative to the
         mean of the lowest concentration group.
         """
-        template = kwargs.get('template', 'plotly_white')
         logger.info("Generating Log2 Relative Abundance Ratio plot...")
         try:
             mean_log2_stats = self._get_mean_log2_stats()
@@ -288,9 +293,7 @@ class DilutionSeriesVisualizer:
                                   annotation_position="bottom right")
             
             fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
-            
-            # Explicitly pass template
-            fig.update_layout(showlegend=False, template=template)
+            fig.update_layout(showlegend=False)
             return fig
         except Exception as e:
             logger.error(f"Error in plot_relative_abundance_ratios: {e}", exc_info=True)
@@ -299,9 +302,6 @@ class DilutionSeriesVisualizer:
     def plot_completeness_overview(self, identifier_col='Protein.Group', use_log_scale=False, cv_threshold=20.0, **kwargs):
         """
         Generates stacked bar charts showing detection completeness.
-        
-        Left Plot: Stacked Bar Chart of ABSOLUTE counts per category.
-        Right Plot: Stacked Bar Chart of PERCENTAGES (0-100%) per category.
         """
         logger.info(f"Generating completeness overview for {identifier_col}...")
         
@@ -379,13 +379,14 @@ class DilutionSeriesVisualizer:
         slice_teal = np.maximum(0, total_arr - avg_arr)
 
         # Percentage Values for Right Plot
+        # Use numpy to safely divide, avoiding division by zero warnings
         with np.errstate(divide='ignore', invalid='ignore'):
             slice_green_pct = np.nan_to_num(slice_green / total_arr) * 100
             slice_blue_pct = np.nan_to_num(slice_blue / total_arr) * 100
             slice_pink_pct = np.nan_to_num(slice_pink / total_arr) * 100
             slice_teal_pct = np.nan_to_num(slice_teal / total_arr) * 100
 
-        # Helper to clean text labels (replace 0 with empty string for cleanliness)
+        # Helper to clean text labels
         def get_clean_labels(arr):
             return [str(int(x)) if x > 0 else "" for x in arr]
         
