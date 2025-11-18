@@ -298,14 +298,18 @@ class DilutionSeriesVisualizer:
 
     def plot_completeness_overview(self, identifier_col='Protein.Group', use_log_scale=False, cv_threshold=20.0, **kwargs):
         """
-        Generates stacked bar charts showing detection completeness and reproducibility.
+        Generates stacked bar charts showing detection completeness.
+        
+        Left Plot: Stacked Bar Chart of ABSOLUTE counts per category.
+        Right Plot: Stacked Bar Chart of PERCENTAGES (0-100%) per category.
         """
         logger.info(f"Generating completeness overview for {identifier_col}...")
         
+        # Validate the identifier column exists
         if identifier_col not in self.protein_df.columns:
             raise ValueError(f"Column '{identifier_col}' not found in protein data.")
         
-        # Extract template explicitly
+        # Extract template specifically since go.Figure doesn't use kwargs automatically like px
         template = kwargs.get('template', 'plotly_white')
 
         # Get the list of groups in order
@@ -368,69 +372,122 @@ class DilutionSeriesVisualizer:
         complete_arr = np.array(complete_list)
         high_quality_arr = np.array(high_quality_list)
 
+        # Absolute Counts for Left Plot
         slice_green = high_quality_arr
         slice_blue = np.maximum(0, complete_arr - high_quality_arr)
         slice_pink = np.maximum(0, avg_arr - complete_arr)
         slice_teal = np.maximum(0, total_arr - avg_arr)
+
+        # Percentage Values for Right Plot
+        with np.errstate(divide='ignore', invalid='ignore'):
+            slice_green_pct = np.nan_to_num(slice_green / total_arr) * 100
+            slice_blue_pct = np.nan_to_num(slice_blue / total_arr) * 100
+            slice_pink_pct = np.nan_to_num(slice_pink / total_arr) * 100
+            slice_teal_pct = np.nan_to_num(slice_teal / total_arr) * 100
+
+        # Helper to clean text labels (replace 0 with empty string for cleanliness)
+        def get_clean_labels(arr):
+            return [str(int(x)) if x > 0 else "" for x in arr]
         
         # --- 3. Create the Figure with Subplots ---
         plot_name = identifier_col.replace('.', ' ').replace('_', ' ').title()
         fig = make_subplots(
             rows=1, cols=2,
-            subplot_titles=(f"Total {plot_name}s", f"% {plot_name}s (to total)"),
+            subplot_titles=(f"Total {plot_name}s (Absolute)", f"% {plot_name}s (to total)"),
             horizontal_spacing=0.1
         )
         
-        # --- 4. Plot 1: Absolute Count Bar Chart (Left) ---
-        fig.add_trace(go.Bar(
-            name='Total Detected',
-            x=group_labels, y=total_arr, text=total_arr, textposition='auto',
-            marker_color='#2ca02c', showlegend=False,
-            hovertemplate='<b>%{x}</b><br>Total Detected: %{y}<extra></extra>'
-        ), row=1, col=1)
-
-        # --- 5. Plot 2: Stacked 100% Bar Chart (Right) ---
+        # --- 4. Plot 1: Stacked Bar Chart - ABSOLUTE VALUES (Left) ---
+        
+        # High Quality (Green)
         fig.add_trace(go.Bar(
             name=f'All Reps + CV<{cv_threshold}%', x=group_labels, y=slice_green,
-            marker_color='#2ca02c', hovertemplate='<b>%{x}</b><br>High Quality: %{y} (%{customdata:.1f}%)<extra></extra>',
-            customdata=(slice_green / total_arr * 100), legendgroup='stack'
-        ), row=1, col=2)
+            marker_color='#2ca02c', hovertemplate='<b>%{x}</b><br>High Quality: %{y}<extra></extra>',
+            text=get_clean_labels(slice_green), textposition='inside',
+            legendgroup='High Quality', showlegend=True 
+        ), row=1, col=1)
         
+        # Complete (Blue)
         fig.add_trace(go.Bar(
             name='All Reps', x=group_labels, y=slice_blue,
-            marker_color='#1f77b4', hovertemplate='<b>%{x}</b><br>Complete (High CV): %{y} (%{customdata:.1f}%)<extra></extra>',
-            customdata=(slice_blue / total_arr * 100), legendgroup='stack'
-        ), row=1, col=2)
+            marker_color='#1f77b4', hovertemplate='<b>%{x}</b><br>Complete (High CV): %{y}<extra></extra>',
+            text=get_clean_labels(slice_blue), textposition='inside',
+            legendgroup='Complete', showlegend=True
+        ), row=1, col=1)
         
+        # Avg per Sample (Pink)
         fig.add_trace(go.Bar(
             name='Average/Sample', x=group_labels, y=slice_pink,
-            marker_color='#ff7f0e', hovertemplate='<b>%{x}</b><br>Incomplete (Avg): %{y} (%{customdata:.1f}%)<extra></extra>',
-            customdata=(slice_pink / total_arr * 100), legendgroup='stack'
-        ), row=1, col=2)
+            marker_color='#ff7f0e', hovertemplate='<b>%{x}</b><br>Incomplete (Avg): %{y}<extra></extra>',
+            text=get_clean_labels(slice_pink), textposition='inside',
+            legendgroup='Average', showlegend=True
+        ), row=1, col=1)
         
+        # Total Detected (Teal)
         fig.add_trace(go.Bar(
             name='Total', x=group_labels, y=slice_teal,
-            marker_color='#d62728', hovertemplate='<b>%{x}</b><br>Incomplete (Low Freq): %{y} (%{customdata:.1f}%)<extra></extra>',
-            customdata=(slice_teal / total_arr * 100), legendgroup='stack'
+            marker_color='#d62728', hovertemplate='<b>%{x}</b><br>Incomplete (Low Freq): %{y}<extra></extra>',
+            text=get_clean_labels(slice_teal), textposition='inside',
+            legendgroup='Total', showlegend=True
+        ), row=1, col=1)
+
+
+        # --- 5. Plot 2: Stacked Bar Chart - PERCENTAGE VALUES (Right) ---
+        
+        # High Quality (Green) - PCT
+        fig.add_trace(go.Bar(
+            name=f'All Reps + CV<{cv_threshold}%', x=group_labels, y=slice_green_pct,
+            marker_color='#2ca02c', 
+            hovertemplate='<b>%{x}</b><br>High Quality: %{y:.1f}%<extra></extra>',
+            text=slice_green_pct,
+            texttemplate='%{text:.0f}%', textposition='inside', textfont=dict(size=10, color='white'),
+            legendgroup='High Quality', showlegend=False
+        ), row=1, col=2)
+        
+        # Complete (Blue) - PCT
+        fig.add_trace(go.Bar(
+            name='All Reps', x=group_labels, y=slice_blue_pct,
+            marker_color='#1f77b4',
+            hovertemplate='<b>%{x}</b><br>Complete (High CV): %{y:.1f}%<extra></extra>',
+            text=slice_blue_pct,
+            texttemplate='%{text:.0f}%', textposition='inside', textfont=dict(size=10, color='white'),
+            legendgroup='Complete', showlegend=False
+        ), row=1, col=2)
+        
+        # Avg per Sample (Pink) - PCT
+        fig.add_trace(go.Bar(
+            name='Average/Sample', x=group_labels, y=slice_pink_pct,
+            marker_color='#ff7f0e',
+            hovertemplate='<b>%{x}</b><br>Incomplete (Avg): %{y:.1f}%<extra></extra>',
+            text=slice_pink_pct,
+            texttemplate='%{text:.0f}%', textposition='inside', textfont=dict(size=10, color='white'),
+            legendgroup='Average', showlegend=False
+        ), row=1, col=2)
+        
+        # Total Detected (Teal) - PCT
+        fig.add_trace(go.Bar(
+            name='Total', x=group_labels, y=slice_teal_pct,
+            marker_color='#d62728',
+            hovertemplate='<b>%{x}</b><br>Incomplete (Low Freq): %{y:.1f}%<extra></extra>',
+            text=slice_teal_pct,
+            texttemplate='%{text:.0f}%', textposition='inside', textfont=dict(size=10, color='white'),
+            legendgroup='Total', showlegend=False
         ), row=1, col=2)
 
         # --- 6. Update Layouts ---
         fig.update_layout(
             height=500,
-            template=template, # Apply template here
+            template=template,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            yaxis=dict(title='Count' if not use_log_scale else 'Count (log scale)', type='log' if use_log_scale else 'linear'),
+            barmode='stack', 
+            yaxis=dict(title='Absolute Count', type='log' if use_log_scale else 'linear'),
             xaxis=dict(title='Concentration Group'),
-            barmode='stack', barnorm='percent',
-            yaxis2=dict(title='% (to total)'), xaxis2=dict(title='Concentration Group')
+            yaxis2=dict(title='% of Total', range=[0, 101]), 
+            xaxis2=dict(title='Concentration Group')
         )
 
-        fig.for_each_trace(
-            lambda t: t.update(
-                texttemplate='%{customdata:.0f}%', textposition='inside',
-                textfont=dict(size=12, color='white')
-            ) if t.legendgroup == 'stack' else (),
-        )
+        # Optional: Set a uniform text size for the left plot as well
+        fig.for_each_trace(lambda t: t.update(textfont=dict(color='white')), row=1, col=1)
         
         logger.info("Completeness overview plot generated successfully.")
         return fig
