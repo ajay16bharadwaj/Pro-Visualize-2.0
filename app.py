@@ -12,7 +12,7 @@ from modules.qc_module import render as render_qc
 from modules.dilution_module import render as render_dilution
 from modules.quant_module import render as render_quant
 from modules.comparative_module import render as render_comp
-from modules.rag_module import render as render_rag
+#from modules.rag_module import render as render_rag
 
 
 # Future modules will be imported here
@@ -78,4 +78,5 @@ with tab_comp:
     render_comp()
 
 with tab_chat:  
-    render_rag()
+    #render_rag()
+    st.info("This section is currently under development. 🏗️")
