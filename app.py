@@ -9,7 +9,7 @@ warnings.filterwarnings(
 # --- Import Project Modules ---
 # Import the main render function from your QC module
 from modules.qc_module import render as render_qc
-from modules.dilution_module import render as render_dilution
+#from modules.dilution_module import render as render_dilution
 from modules.quant_module import render as render_quant
 from modules.comparative_module import render as render_comp
 #from modules.rag_module import render as render_rag
@@ -63,7 +63,8 @@ with tab_dilution:
     #st.header("Dilution Series Analysis")
     #st.info("This section is currently under development. 🏗️")
     # Future: 
-    render_dilution()
+    #render_dilution()
+    st.info("This section is currently under development. Taking this off for plotmanager debugging🏗️")
 
 with tab_quant:
     #st.header("Protein Quantification")
