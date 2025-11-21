@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
 import logging
+import plotly.express as px
+from plotly import colors as pc 
 from visualizations.quant_visualizer import QuantificationVisualizer
 from utils.helpers import handle_plotting_errors
+from utils.plot_manager import PlotManager
 from io import BytesIO
 
 # Set up a logger for this module
@@ -12,6 +15,13 @@ class QuantificationTab:
     """
     Encapsulates the Streamlit UI and logic for the Quantification Analysis tab.
     """
+    
+    # Keys used for PlotManager state tracking
+    PLOT_KEYS = [
+        "quant_counts", "quant_missing_heat", "quant_missing_dist", 
+        "quant_overlap", "quant_coverage", "quant_rank", 
+        "quant_pca_anno", "quant_pca_cluster"
+    ]
 
     def __init__(self):
         """Initializes the QuantificationTab and its session state."""
@@ -70,19 +80,87 @@ class QuantificationTab:
                 else:
                     st.warning("Please upload at least a protein-level data file.")
 
+    def _render_global_settings(self):
+        """Renders global visual settings and returns kwargs for plot generation."""
+        with st.expander("🎨 Global Plot Settings (Colors & Theme)", expanded=False):
+            c1, c2 = st.columns(2)
+            
+            with c1:
+                theme_options = {
+                    "Standard White": "plotly_white",
+                    "Dark Mode": "plotly_dark",
+                    "Minimal": "simple_white",
+                    "GGPlot Style": "ggplot2",
+                    "Seaborn Style": "seaborn"
+                }
+                selected_theme_label = st.selectbox(
+                    "Plot Theme", 
+                    list(theme_options.keys()), 
+                    key="quant_global_theme_select"
+                )
+                selected_template = theme_options[selected_theme_label]
+
+            with c2:
+                visualizer = st.session_state.quant_visualizer
+                groups = visualizer.experimental_groups if visualizer.experimental_groups else []
+                color_map = {}
+                
+                if groups:
+                    st.markdown("**Customize Group Colors:**")
+                    cols = st.columns(4)
+                    
+                    # FIX: Convert Plotly's RGB strings to Hex for the color picker
+                    # pc.unlabel_rgb returns a tuple of floats, we cast to int for formatting
+                    try:
+                        safe_colors = ['#%02x%02x%02x' % tuple(int(x) for x in pc.unlabel_rgb(c)) for c in px.colors.qualitative.Safe]
+                    except Exception:
+                        # Fallback if colors are already hex or other format
+                        safe_colors = px.colors.qualitative.Safe
+
+                    for i, group in enumerate(groups):
+                        default_c = safe_colors[i % len(safe_colors)]
+                        with cols[i % 4]: 
+                            color_map[group] = st.color_picker(
+                                f"{group}", 
+                                value=default_c, 
+                                key=f"quant_color_{group}"
+                            )
+                else:
+                    st.caption("No experimental groups found to colorize.")
+
+            st.markdown("---")
+            
+            if st.button("Apply Settings to All Plots", type="primary", use_container_width=True):
+                for key in self.PLOT_KEYS:
+                    fig_key = f"{key}_fig"
+                    if fig_key in st.session_state:
+                        st.session_state[fig_key] = None
+                
+                st.success(f"Settings applied! Plots will regenerate automatically.")
+                st.rerun()
+
+        global_kwargs = {"template": selected_template}
+        if color_map:
+            global_kwargs["color_discrete_map"] = color_map
+            
+        return global_kwargs
+
     @handle_plotting_errors
     def _display_results(self):
         """Displays the main analysis dashboard with different tabs."""
         visualizer = st.session_state.quant_visualizer
         st.header("Quantification Analysis Dashboard")
+        
+        # Render global settings and get kwargs
+        global_plot_kwargs = self._render_global_settings()
 
         intersections_tab, completeness_tab, dist_corr_tab, clustering_tab = st.tabs([
             "🔎 Set Intersections", "📊 Data Completeness",
             "📈 Ranking, Distributions & Correlations", "🧬 Clustering"
         ])
 
+        # --- TAB 1: INTERSECTIONS (Static Plots preserved) ---
         with intersections_tab:
-            # ... (Code is unchanged)
             st.markdown("### Visualize Protein Set Overlaps")
             if visualizer.annotation_df is None:
                 st.warning("An annotation file is required for these plots.", icon="⚠️")
@@ -115,51 +193,50 @@ class QuantificationTab:
                                     st.pyplot(fig, use_container_width=True)
                         except Exception as e: st.error(f"Failed to create UpSet plot: {e}")
 
+        # --- TAB 2: COMPLETENESS (Updated with PlotManager) ---
         with completeness_tab:
-            # ... (Code is unchanged)
             st.markdown("### Protein Counts, Missingness, and Overlap")
             counts_inner_tab, missingness_inner_tab, overlap_inner_tab = st.tabs(["Protein Counts per Sample", "Missingness Analysis", "Overlap & Coverage"])
+            
             with counts_inner_tab:
-                try:
-                    with st.spinner("Generating plot..."):
-                        fig = visualizer.plot_protein_counts()
-                        st.plotly_chart(fig, use_container_width=True)
-                except Exception as e: st.error(f"Failed to generate protein counts plot: {e}")
+                pm_counts = PlotManager("quant_counts")
+                pm_counts.render_generate_button(visualizer.plot_protein_counts, **global_plot_kwargs)
+                pm_counts.render_plot_and_editor()
+            
             with missingness_inner_tab:
                 heatmap_tab, distribution_tab = st.tabs(["Missing Value Heatmap", "Missing Value Distribution"])
                 with heatmap_tab:
                     if visualizer.annotation_df is None:
                         st.warning("An annotation file is required for the missingness heatmap.", icon="⚠️")
                     else:
-                        try:
-                            with st.spinner("Generating missingness heatmap..."):
-                                fig = visualizer.plot_missing_values_heatmap()
-                                st.plotly_chart(fig, use_container_width=True)
-                        except Exception as e: st.error(f"Failed to generate missingness plot: {e}")
+                        pm_heat = PlotManager("quant_missing_heat")
+                        pm_heat.render_generate_button(visualizer.plot_missing_values_heatmap, **global_plot_kwargs)
+                        pm_heat.render_plot_and_editor()
+                        
                 with distribution_tab:
                     st.info("This plot helps diagnose the nature of missing data.")
-                    try:
-                        with st.spinner("Generating distribution plots..."):
-                            fig = visualizer.plot_missing_value_distribution()
-                            st.plotly_chart(fig, use_container_width=True)
-                    except Exception as e: st.error(f"Failed to generate distribution plots: {e}")
+                    pm_dist = PlotManager("quant_missing_dist")
+                    pm_dist.render_generate_button(visualizer.plot_missing_value_distribution, **global_plot_kwargs)
+                    pm_dist.render_plot_and_editor()
+            
             with overlap_inner_tab:
                 st.markdown("#### Protein Identification Overlap & Coverage")
                 col1, col2 = st.columns(2)
                 with col1:
-                    try:
-                        with st.spinner("Generating overlap plot..."):
-                            fig_overlap = visualizer.plot_protein_overlap()
-                            st.plotly_chart(fig_overlap, use_container_width=True)
-                    except Exception as e: st.error(f"Failed to generate overlap plot: {e}")
-                
+                    pm_overlap = PlotManager("quant_overlap")
+                    pm_overlap.render_generate_button(visualizer.plot_protein_overlap, **global_plot_kwargs)
+                    pm_overlap.render_plot_and_editor()
+                with col2:
+                    pm_cov = PlotManager("quant_coverage")
+                    pm_cov.render_generate_button(visualizer.plot_protein_coverage_chart, **global_plot_kwargs)
+                    pm_cov.render_plot_and_editor()
 
+        # --- TAB 3: DISTRIBUTIONS (Rank Order updated) ---
         with dist_corr_tab:
             st.markdown("### Intensity Distributions and Sample Correlations")
             dist_inner_tab, rank_inner_tab, corr_inner_tab = st.tabs(["Intensity Distribution", "Protein Rank Order", "Correlation Matrix"])
 
             with dist_inner_tab:
-                # ... (Code is unchanged)
                 if visualizer.annotation_df is None:
                     st.warning("An annotation file is required to generate this plot.", icon="⚠️")
                 else:
@@ -173,7 +250,9 @@ class QuantificationTab:
                 st.markdown("### Protein Rank by Average Intensity")
                 st.info("This plot ranks proteins by their mean intensity. Use the options below to highlight and color proteins of interest.")
 
-                with st.expander("Customize Plot"):
+                # --- CUSTOMIZE PLOT EXPANDER ---
+                # Changing widgets here does NOT trigger a plot update until the button is clicked
+                with st.expander("Customize Plot", expanded=True):
                     st.markdown("**1. Annotate Proteins**")
                     protein_id_col = visualizer.protein_col
                     gene_name_col = 'Gene Name' if 'Gene Name' in visualizer.protein_df.columns else None
@@ -181,6 +260,7 @@ class QuantificationTab:
                         protein_options = [f"{gene} ({pid})" for gene, pid in visualizer.protein_df[[gene_name_col, protein_id_col]].dropna().values]
                     else:
                         protein_options = visualizer.protein_df[protein_id_col].dropna().unique().tolist()
+                    
                     proteins_to_annotate = st.multiselect("Select specific proteins to mark with an arrow:", options=protein_options)
                     cleaned_annotations = [item.split(" (")[0] for item in proteins_to_annotate] if gene_name_col else proteins_to_annotate
 
@@ -188,7 +268,7 @@ class QuantificationTab:
                     color_by_option = st.selectbox("Choose a coloring method:", ['None', 'Custom List', 'Transcription Factors', 'Keyword Search'])
 
                     custom_list, keyword = None, None
-                    annotate_highlighted = False # Default to False
+                    annotate_highlighted = False 
 
                     if color_by_option == 'Custom List':
                         custom_list_input = st.text_area("Enter a list of Protein IDs or Gene Names (one per line):")
@@ -214,22 +294,33 @@ class QuantificationTab:
                         if keyword:
                             annotate_highlighted = st.checkbox("Add arrows for highlighted proteins (Top 10)")
 
-                try:
-                    with st.spinner("Generating rank order plot..."):
-                        fig = visualizer.plot_protein_rank_order(
-                            proteins_to_annotate=cleaned_annotations,
-                            color_by_option=color_by_option,
-                            custom_list=custom_list,
-                            keyword=keyword,
-                            annotate_highlighted=annotate_highlighted
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Failed to generate rank order plot: {e}")
+                    st.markdown("---")
+                    st.markdown("**3. Arrow Customization**")
+                    ac1, ac2, ac3 = st.columns(3)
+                    ah = ac1.slider("Head Size", 1, 8, 2, key="quant_arrow_head")
+                    as_ = ac2.slider("Length", 1, 5, 1, key="quant_arrow_size")
+                    aw = ac3.slider("Width", 1, 5, 1, key="quant_arrow_width")
+                    arrow_config = {'arrowhead': ah, 'arrowsize': as_, 'arrowwidth': aw}
+
+                # --- SUBMIT BUTTON ---
+                # The PlotManager renders the "Generate/Update Plot" button here.
+                pm_rank = PlotManager("quant_rank")
+                pm_rank.render_generate_button(
+                    visualizer.plot_protein_rank_order,
+                    proteins_to_annotate=cleaned_annotations,
+                    color_by_option=color_by_option,
+                    custom_list=custom_list,
+                    keyword=keyword,
+                    annotate_highlighted=annotate_highlighted,
+                    arrow_config=arrow_config,
+                    **global_plot_kwargs
+                )
+                pm_rank.render_plot_and_editor()
 
             with corr_inner_tab:
                 st.info("This section is under development. 🏗️")
             
+        # --- TAB 4: CLUSTERING (Updated) ---
         with clustering_tab:
             st.markdown("### Sample Clustering Analysis")
             pca_anno_tab, pca_cluster_tab, dendro_tab = st.tabs([
@@ -256,19 +347,17 @@ class QuantificationTab:
                             "Shape points by:", options=[None] + annotation_cols
                         )
                     
-                    # --- NEW: Add toggle for labels ---
                     show_labels_anno = st.toggle("Show sample labels", key="pca_anno_labels")
                     
-                    try:
-                        with st.spinner("Generating PCA plot..."):
-                            fig = visualizer.plot_pca_by_annotation(
-                                color_by=color_by, 
-                                symbol_by=symbol_by,
-                                show_labels=show_labels_anno # Pass the toggle state
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Failed to generate PCA plot: {e}")
+                    pm_pca_anno = PlotManager("quant_pca_anno")
+                    pm_pca_anno.render_generate_button(
+                        visualizer.plot_pca_by_annotation,
+                        color_by=color_by, 
+                        symbol_by=symbol_by,
+                        show_labels=show_labels_anno,
+                        **global_plot_kwargs
+                    )
+                    pm_pca_anno.render_plot_and_editor()
 
             with pca_cluster_tab:
                 st.markdown("#### PCA with Unsupervised Clustering")
@@ -278,18 +367,16 @@ class QuantificationTab:
                     "Number of clusters (k):", min_value=2, max_value=10, value=3, step=1
                 )
                 
-                # --- NEW: Add toggle for labels ---
                 show_labels_cluster = st.toggle("Show sample labels", key="pca_cluster_labels")
 
-                try:
-                    with st.spinner("Generating clustered PCA plot..."):
-                        fig = visualizer.plot_pca_with_clusters(
-                            n_clusters=n_clusters,
-                            show_labels=show_labels_cluster # Pass the toggle state
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Failed to generate plot: {e}")
+                pm_pca_cluster = PlotManager("quant_pca_cluster")
+                pm_pca_cluster.render_generate_button(
+                    visualizer.plot_pca_with_clusters,
+                    n_clusters=n_clusters,
+                    show_labels=show_labels_cluster,
+                    **global_plot_kwargs
+                )
+                pm_pca_cluster.render_plot_and_editor()
 
             with dendro_tab:
                 st.markdown("#### Hierarchical Clustering Dendrogram")
