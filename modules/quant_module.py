@@ -56,7 +56,7 @@ class QuantificationTab:
                 group_col = st.text_input("Experimental Group Column (in Annotation)", value="attribute_ExperimentalGroup")
 
 
-            if st.button("Load & Process Data", use_container_width=True, type="primary"):
+            if st.button("Load & Process Data", use_container_width=True, type="primary", key="quant_load_data_btn"):
                 if protein_file:
                     try:
                         protein_df = pd.read_csv(protein_file, sep=None, engine='python')

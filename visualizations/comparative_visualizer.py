@@ -6,26 +6,10 @@ from io import BytesIO
 import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
-# Import third-party libraries for plotting
-from venn import venn
-from upsetplot import UpSet, from_memberships
-import plotly.figure_factory as ff
 import seaborn as sns
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-from scipy.spatial import ConvexHull
-import scipy.cluster.hierarchy as sch
-import seaborn as sns
-import matplotlib.pyplot as plt
-from io import BytesIO
-from sklearn.preprocessing import StandardScaler
-from sklearn.impute import SimpleImputer
-from plotly.subplots import make_subplots
-import plotly.graph_objects as go
 import requests
-import json
 import time
 
 logger = logging.getLogger(__name__)
@@ -49,12 +33,6 @@ class ComparativeVisualizer:
                  comparative_df: pd.DataFrame, column_config: dict):
         """
         Initializes the visualizer with all necessary data and configuration.
-
-        Args:
-            protein_df (pd.DataFrame): DataFrame with protein abundance data.
-            annotation_df (pd.DataFrame): DataFrame with sample metadata.
-            comparative_df (pd.DataFrame): DataFrame with statistical comparison results.
-            column_config (dict): A dictionary mapping standard roles to actual column names.
         """
         logger.info("Initializing ComparativeVisualizer...")
         self.column_config = column_config
@@ -72,8 +50,6 @@ class ComparativeVisualizer:
 
     def _validate_data(self, protein_df, annotation_df, comparative_df):
         """Performs initial validation of all input dataframes."""
-        
-        # --- Expected columns based on the config ---
         protein_col = self.column_config['protein_id']
         sample_col = self.column_config['sample_id']
         group_col = self.column_config['grouping']
@@ -82,7 +58,6 @@ class ComparativeVisualizer:
         fdr_col = self.column_config['fdr']
         label_col = self.column_config['comparison_label']
 
-        # --- Validation checks ---
         if protein_col not in protein_df.columns:
             raise ValueError(f"Protein data is missing the specified protein column: '{protein_col}'")
         if sample_col not in annotation_df.columns:
@@ -105,14 +80,12 @@ class ComparativeVisualizer:
         """
         Counts how many proteins in the current comparative dataset match the built-in TF list.
         """
-        # Ensure 'Gene Name' is available by merging with the main protein info
         protein_id_col = self.column_config['protein_id']
         comp_protein_col = self.column_config['comp_protein_id']
         
         if 'Gene Name' not in self.protein_df.columns:
             return 0
         
-        # Merge to get gene names for the proteins in the comparative analysis results
         merged_df = pd.merge(
             self.comparative_df[[comp_protein_col]],
             self.protein_df[[protein_id_col, 'Gene Name']],
@@ -136,49 +109,35 @@ class ComparativeVisualizer:
 
     def filter_significant_proteins(self, comparison: str, fdr_cutoff: float, fc_cutoff: float):
         """
-        Filters the comparative data for a specific comparison and returns
-        significantly up- and down-regulated proteins.
-
-        Args:
-            comparison (str): The comparison group to filter (e.g., 'Control/Ethanol').
-            fdr_cutoff (float): The FDR threshold (e.g., 0.05).
-            fc_cutoff (float): The absolute Log2 Fold Change threshold (e.g., 1.0).
-
-        Returns:
-            A pandas DataFrame containing only the significant proteins for that comparison.
+        Filters the comparative data for a specific comparison.
         """
-        logger.info(f"Filtering for significant proteins in '{comparison}' with FDR <= {fdr_cutoff} and |log2FC| >= {fc_cutoff}")
-        
-        # Column names from config
+        logger.info(f"Filtering for significant proteins in '{comparison}'...")
         label_col = self.column_config['comparison_label']
         fdr_col = self.column_config['fdr']
         fc_col = self.column_config['fold_change']
         
-        # Filter for the selected comparison
         comparison_df = self.comparative_df[self.comparative_df[label_col] == comparison].copy()
-        
-        # Apply FDR and FC filters
         significant_mask = (comparison_df[fdr_col] <= fdr_cutoff) & (comparison_df[fc_col].abs() >= fc_cutoff)
         significant_df = comparison_df[significant_mask]
 
-        # Add a status column for clarity
         significant_df['Regulation'] = 'Down-regulated'
         significant_df.loc[significant_df[fc_col] > 0, 'Regulation'] = 'Up-regulated'
         
         return significant_df
-    
-
-    # ... (inside the ComparativeVisualizer class)
 
     def plot_volcano(self, fdr_cutoff: float, fc_cutoff: float,
                      proteins_to_annotate=None, color_by_option='None',
-                     custom_list=None, keyword=None, annotate_top_10=False):
+                     custom_list=None, keyword=None, annotate_top_10=False,
+                     arrow_config=None, **kwargs):
         """
-        Generates a volcano plot with an option to auto-annotate the top 10 DE proteins.
+        Generates a volcano plot with customizable arrows and themes.
         """
-        logger.info(f"Generating volcano plot with options: {color_by_option}")
+        logger.info(f"Generating volcano plot...")
         
-        # 1. Get column names and prepare data (unchanged)
+        # Default arrow config
+        if arrow_config is None:
+            arrow_config = {'arrowhead': 2, 'arrowsize': 1, 'arrowwidth': 1}
+        
         comp_protein_col = self.column_config['comp_protein_id']
         fc_col = self.column_config['fold_change']
         fdr_col = self.column_config['fdr']
@@ -198,12 +157,13 @@ class ComparativeVisualizer:
             left_on=comp_protein_col, right_on=protein_id_col, how='left'
         )
 
-        # 2. Define significance and custom colors (unchanged)
+        # Color logic
         plot_df['Color'] = 'Non-significant'
         plot_df.loc[plot_df[fdr_col] <= fdr_cutoff, 'Color'] = 'Significant'
         plot_df.loc[(plot_df[fdr_col] <= fdr_cutoff) & (plot_df[fc_col] > fc_cutoff), 'Color'] = 'Up-regulated'
         plot_df.loc[(plot_df[fdr_col] <= fdr_cutoff) & (plot_df[fc_col] < -fc_cutoff), 'Color'] = 'Down-regulated'
         color_map = {'Up-regulated': '#D55E00', 'Down-regulated': '#0072B2', 'Significant': '#F0E442', 'Non-significant': '#999999'}
+        
         if color_by_option == 'Custom List' and custom_list:
             mask = plot_df[comp_protein_col].isin(custom_list) | plot_df['Gene Name'].isin(custom_list)
             plot_df.loc[mask, 'Color'] = 'In Custom List'; color_map['In Custom List'] = '#009E73'
@@ -214,20 +174,23 @@ class ComparativeVisualizer:
             mask = plot_df['Protein Description'].str.contains(keyword, case=False, na=False)
             plot_df.loc[mask, 'Color'] = f"Contains '{keyword}'"; color_map[f"Contains '{keyword}'"] = '#56B4E9'
 
-        # 3. Create scatter plot (unchanged)
+        # Extract kwargs but remove global color map as Volcano uses specific significance colors
+        plot_kwargs = kwargs.copy()
+        plot_kwargs.pop('color_discrete_map', None)
+
         fig = px.scatter(
             plot_df, x=fc_col, y='-log10(FDR)', color='Color',
             color_discrete_map=color_map, hover_data=[comp_protein_col, 'Gene Name', 'Protein Description'],
-            title=f"Volcano Plot for {comparison}"
+            title=f"Volcano Plot for {comparison}",
+            **plot_kwargs
         )
         fig.add_vline(x=fc_cutoff, line_dash="dash", line_color="grey")
         fig.add_vline(x=-fc_cutoff, line_dash="dash", line_color="grey")
         fig.add_hline(y=-np.log10(fdr_cutoff), line_dash="dash", line_color="grey")
 
-        # --- NEW: 4. Annotation logic with default Top 10 ---
+        # Annotations
         final_annotations = set(proteins_to_annotate if proteins_to_annotate else [])
         if annotate_top_10:
-            # Find top 10 significant proteins by lowest FDR
             significant_df = plot_df[(plot_df[fdr_col] <= fdr_cutoff) & (plot_df[fc_col].abs() >= fc_cutoff)]
             top_10_df = significant_df.nsmallest(10, fdr_col)
             for protein in top_10_df['Gene Name'].fillna(top_10_df[comp_protein_col]).tolist():
@@ -241,30 +204,26 @@ class ComparativeVisualizer:
                     fig.add_annotation(
                         x=row[fc_col], y=row['-log10(FDR)'],
                         text=row.get('Gene Name') or row.get(comp_protein_col),
-                        showarrow=True, arrowhead=2, arrowsize=1, ax=20, ay=-40,
-                        font=dict(color="black", size=12)
+                        showarrow=True, 
+                        arrowhead=arrow_config.get('arrowhead', 2),
+                        arrowsize=arrow_config.get('arrowsize', 1),
+                        arrowwidth=arrow_config.get('arrowwidth', 1),
+                        ax=20, ay=-40, font=dict(color="black", size=12)
                     )
         
         fig.update_layout(height=700)
         return fig
-    
 
     def plot_comparative_heatmap(self, protein_list: list):
         """
-        Generates a clustered heatmap for a given list of proteins using Seaborn,
-        with a color bar annotating the sample groups.
-
-        Args:
-            protein_list (list): A list of Protein IDs to include in the heatmap.
+        Generates a clustered heatmap using Seaborn (Static).
         """
         logger.info(f"Generating Seaborn heatmap for {len(protein_list)} proteins.")
         
-        # 1. Get column names from config
         protein_id_col = self.column_config['protein_id']
         sample_id_col = self.column_config['sample_id']
         group_col = self.column_config['grouping']
 
-        # 2. Filter protein data for the selected list
         if not protein_list:
             raise ValueError("The list of proteins to plot cannot be empty.")
         heatmap_df = self.protein_df[self.protein_df[protein_id_col].isin(protein_list)]
@@ -276,55 +235,47 @@ class ComparativeVisualizer:
         
         intensity_matrix = heatmap_df.set_index(row_labels)[self.sample_cols]
 
-        # 3. Impute and Z-score scale the data
         imputer = SimpleImputer(strategy='mean')
         imputed_matrix = imputer.fit_transform(intensity_matrix)
         scaler = StandardScaler()
         scaled_matrix = scaler.fit_transform(imputed_matrix.T).T
         scaled_df = pd.DataFrame(scaled_matrix, index=intensity_matrix.index, columns=intensity_matrix.columns)
 
-        # 4. Create the color mapping for the sample groups
         groups = self.annotation_df.set_index(sample_id_col)[group_col]
         unique_groups = groups.unique()
         palette = sns.color_palette("viridis", len(unique_groups))
         color_map = dict(zip(unique_groups, palette))
         col_colors = groups.map(color_map)
 
-        # 5. Generate the clustermap
-        # Dynamically hide row labels if there are too many proteins to avoid clutter
         show_yticklabels = len(scaled_df) <= 50 
         
         g = sns.clustermap(
             scaled_df,
-            method='ward',       # Hierarchical clustering method
-            cmap='RdBu_r',       # Diverging color map for Z-scores
-            col_colors=col_colors.to_frame(), # Add the group color bar
+            method='ward',       
+            cmap='RdBu_r',       
+            col_colors=col_colors.to_frame(), 
             yticklabels=show_yticklabels,
-            figsize=(12, max(10, len(scaled_df) * 0.08)) # Dynamic height
+            figsize=(12, max(10, len(scaled_df) * 0.08))
         )
         
-        # Add a proper legend for the group colors
         handles = [plt.Rectangle((0,0),1,1, color=color_map[group]) for group in unique_groups]
         plt.legend(handles, unique_groups, title='Group', bbox_to_anchor=(1, 1), 
                    bbox_transform=plt.gcf().transFigure, frameon=False)
         g.fig.suptitle("Heatmap of Protein Abundance (Z-Score)", y=1.02)
         
-        # 6. Save plot to an in-memory buffer to pass to Streamlit
         buf = BytesIO()
         plt.savefig(buf, format="png", bbox_inches='tight')
         buf.seek(0)
         plt.close(g.fig)
         return buf
-    
 
-    def plot_expression_violin(self, protein_list: list):
+    def plot_expression_violin(self, protein_list: list, **kwargs):
         """
         Generates clean, faceted violin plots for a given list of proteins.
-        This version is more robust against proteins with no valid data.
+        Accepts kwargs for global styling.
         """
         logger.info(f"Generating clean violin plots for {len(protein_list)} proteins.")
         
-        # 1. Prepare data (unchanged)
         protein_id_col = self.column_config['protein_id']
         sample_id_col = self.column_config['sample_id']
         group_col = self.column_config['grouping']
@@ -344,30 +295,28 @@ class ComparativeVisualizer:
         plot_data = plot_data[plot_data['Intensity'] > 0].copy()
         plot_data['log2(Intensity)'] = np.log2(plot_data['Intensity'])
 
-        # --- FIX: Loop over proteins actually present in the final data ---
-        # 2. Get the unique list of proteins that have valid data to plot
         valid_proteins_to_plot = plot_data[protein_id_col].unique()
-        
         if len(valid_proteins_to_plot) == 0:
             raise ValueError("None of the selected proteins have valid intensity data to plot.")
 
-        # 3. Set up subplots based on the valid proteins
         num_proteins = len(valid_proteins_to_plot)
         cols = 2
         rows = (num_proteins + 1) // cols
         
         subplot_titles = []
         for protein in valid_proteins_to_plot:
-            # This is now safe because we know the protein exists in plot_data
             gene_name = plot_data[plot_data[protein_id_col] == protein]['Gene Name'].iloc[0]
             subplot_titles.append(gene_name or protein)
 
         fig = make_subplots(rows=rows, cols=cols, subplot_titles=subplot_titles)
 
-        # 4. Create the plot using a loop (unchanged)
-        colors = px.colors.qualitative.Plotly
+        # Colors
+        default_colors = px.colors.qualitative.Plotly
         unique_groups = plot_data[group_col].unique()
         legend_added = []
+        
+        # Extract user custom colors if present
+        custom_colors = kwargs.get('color_discrete_map', {})
 
         for i, protein in enumerate(valid_proteins_to_plot):
             row = (i // cols) + 1
@@ -379,18 +328,26 @@ class ComparativeVisualizer:
                 show_legend = group not in legend_added
                 if show_legend: legend_added.append(group)
                 
+                # Determine color
+                fill_color = custom_colors.get(group, default_colors[j % len(default_colors)])
+                
                 fig.add_trace(go.Violin(
                     x=group_data[group_col], y=group_data['log2(Intensity)'], name=group,
                     box_visible=True, meanline_visible=True, points='all', pointpos=0, jitter=0.05,
-                    fillcolor=colors[j % len(colors)], line_color='black',
+                    fillcolor=fill_color, line_color='black',
                     showlegend=show_legend, legendgroup=group
                 ), row=row, col=col)
 
-        # 5. Final layout (unchanged)
-        fig.update_layout(
+        # Apply template from kwargs
+        layout_args = dict(
             title_text="Protein Expression Distribution", height=400 * rows,
             violingap=0, violingroupgap=0, violinmode='overlay'
         )
+        
+        if 'template' in kwargs:
+            layout_args['template'] = kwargs['template']
+
+        fig.update_layout(**layout_args)
         fig.update_traces(marker=dict(size=3))
         fig.update_yaxes(title_text="log2(Intensity)")
 
@@ -399,7 +356,6 @@ class ComparativeVisualizer:
     def run_enrichment_analysis(self, gene_list: list, organism: str = "human"):
         """
         Perform comprehensive enrichment analysis for a list of genes using Enrichr.
-        This method is adapted from the user-provided 'get_all_enrichment_enrichr'.
         """
         logger.info(f"Running Enrichr analysis for {len(gene_list)} genes on organism '{organism}'...")
         if not gene_list:
@@ -431,7 +387,7 @@ class ComparativeVisualizer:
 
         all_results = []
         for library in organism_libraries[organism.lower()]:
-            time.sleep(0.5) # Be courteous to the API
+            time.sleep(0.5) 
             try:
                 query_url = f'{ENRICHR_URL}/enrich?userListId={user_list_id}&backgroundType={library}'
                 response = requests.get(query_url)
@@ -457,19 +413,17 @@ class ComparativeVisualizer:
         results_df['-log10(p)'] = -np.log10(results_df['p_value'])
         return results_df
 
-    def plot_enrichment_manhattan(self, enrichment_df: pd.DataFrame):
+    def plot_enrichment_manhattan(self, enrichment_df: pd.DataFrame, **kwargs):
         """
         Creates an enhanced Manhattan-like plot with colored blocks for each source.
+        Accepts kwargs for global theme.
         """
         if enrichment_df.empty:
             raise ValueError("Enrichment data is empty, cannot generate Manhattan plot.")
 
-        # Define a consistent order for sources
         source_order = sorted(enrichment_df['source'].unique())
         enrichment_df['source'] = pd.Categorical(enrichment_df['source'], categories=source_order, ordered=True)
         enrichment_df = enrichment_df.sort_values('source')
-        
-        # Assign a continuous index for plotting
         enrichment_df['index'] = range(len(enrichment_df))
 
         fig = px.scatter(
@@ -481,10 +435,10 @@ class ComparativeVisualizer:
             hover_name='name',
             hover_data=['p_value', 'genes'],
             title="Pathway Enrichment Manhattan Plot",
-            labels={'index': 'Enrichment Terms by Source', '-log10(p)': '-log10(p-value)'}
+            labels={'index': 'Enrichment Terms by Source', '-log10(p)': '-log10(p-value)'},
+            **kwargs
         )
 
-        # Add shaded regions for each source category
         start_idx = 0
         for i, source in enumerate(source_order):
             source_data = enrichment_df[enrichment_df['source'] == source]
@@ -503,9 +457,10 @@ class ComparativeVisualizer:
         fig.update_layout(height=600)
         return fig
 
-    def plot_enrichment_dotplot(self, enrichment_df: pd.DataFrame, terms_to_plot: list = None):
+    def plot_enrichment_dotplot(self, enrichment_df: pd.DataFrame, terms_to_plot: list = None, **kwargs):
         """
-        Generates a dot plot for enriched terms, with corrected legend ticks.
+        Generates a dot plot for enriched terms.
+        Accepts kwargs for global theme.
         """
         if enrichment_df.empty:
             raise ValueError("Enrichment data is empty, cannot generate dot plot.")
@@ -530,12 +485,12 @@ class ComparativeVisualizer:
             color_continuous_scale='viridis',
             hover_name='name',
             hover_data=['source', 'adj_p_value', 'genes'],
-            title="Top Enriched Pathways"
+            title="Top Enriched Pathways",
+            **kwargs
         )
         
         min_count = plot_data['intersection_size'].min()
         max_count = plot_data['intersection_size'].max()
-        # Create integer ticks for the color bar
         tick_values = np.linspace(min_count, max_count, num=min(5, max_count - min_count + 1), dtype=int)
 
         fig.update_layout(
@@ -544,6 +499,6 @@ class ComparativeVisualizer:
             xaxis_title="-log10(q-value)",
             yaxis_title="Pathway Term",
             coloraxis_colorbar_title_text='Gene Count',
-            coloraxis_colorbar_tickvals=tick_values # Apply integer ticks
+            coloraxis_colorbar_tickvals=tick_values
         )
         return fig

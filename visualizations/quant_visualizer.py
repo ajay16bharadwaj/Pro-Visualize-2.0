@@ -74,16 +74,30 @@ class QuantificationVisualizer:
                 raise ValueError(f"Annotation data is missing required columns: {', '.join(missing_cols)}")
 
     def _get_protein_sets_by_group(self) -> dict:
+        """Groups proteins into sets based on their experimental group."""
         if self.annotation_df is None:
             raise ValueError("Annotation data is required to group proteins.")
-            
+                    
         protein_sets = {}
         grouped_samples = self.annotation_df.groupby(self.group_col)[self.sample_col].apply(list)
         
         for group, samples in grouped_samples.items():
-            group_df = self.protein_df[[self.protein_col] + [s for s in samples if s in self.protein_df.columns]]
-            detected_proteins = group_df.dropna(subset=samples, how='all')[self.protein_col].unique()
+            # Filter to only samples that exist in protein_df
+            valid_samples = [s for s in samples if s in self.protein_df.columns]
+            
+            if not valid_samples:
+                logger.warning(f"No valid samples found for group '{group}'")
+                protein_sets[group] = set()
+                continue
+            
+            # Select protein column + valid sample columns
+            group_df = self.protein_df[[self.protein_col] + valid_samples].copy()
+            
+            # Find proteins detected in at least one sample of this group
+            detected_proteins = group_df.dropna(subset=valid_samples, how='all')[self.protein_col].unique()
             protein_sets[group] = set(detected_proteins)
+            
+            logger.debug(f"Group '{group}': {len(detected_proteins)} proteins detected")
             
         return protein_sets
 
