@@ -25,8 +25,3 @@ networkx==3.3
 
 # --- Web Application Framework ---
 streamlit==1.36.0
-
-# --- RAG & LLM Dependencies ---
-llama-index-core
-llama-index-llms-google-genai
-llama-index-embeddings-google-genai

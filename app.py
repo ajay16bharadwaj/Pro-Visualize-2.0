@@ -12,12 +12,6 @@ from modules.qc_module import render as render_qc
 from modules.dilution_module import render as render_dilution
 from modules.quant_module import render as render_quant
 from modules.comparative_module import render as render_comp
-#from modules.rag_module import render as render_rag
-
-
-# Future modules will be imported here
-# from modules.quant_module import render as render_quant
-# from modules.comparative_module import render as render_comp
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -31,13 +25,12 @@ st.title("Pro-Visualize: Proteomics Data Visualization")
 st.markdown("A scalable application for multi-omics analysis, starting with targeted and DIA-MS proteomics.")
 
 # --- Create Main Tabs for Different Analyses ---
-tab_welcome, tab_qc, tab_dilution, tab_quant, tab_comp, tab_chat = st.tabs([
+tab_welcome, tab_qc, tab_dilution, tab_quant, tab_comp = st.tabs([
     "👋 Welcome",
-    "📊 QC Analysis", 
+    "📊 QC Analysis",
     "📈 Dilution Series",
-    "📈 Quantification", 
-    "🆚 Comparative Analysis",
-    "💬 Pro-Viz Chat"
+    "📈 Quantification",
+    "🆚 Comparative Analysis"
 ])
 
 with tab_welcome:
@@ -74,9 +67,5 @@ with tab_quant:
 with tab_comp:
     #st.header("Comparative Analysis")
     #st.info("This section is currently under development. 🏗️")
-    # Future: Call 
+    # Future: Call
     render_comp()
-
-with tab_chat:  
-    #render_rag()
-    st.info("This section is currently under development. 🏗️")
