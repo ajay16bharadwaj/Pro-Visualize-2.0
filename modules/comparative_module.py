@@ -82,7 +82,8 @@ class ComparativeTab:
                         d_c = safe_colors[i % len(safe_colors)]
                         with cols[i % 4]: color_map[group] = st.color_picker(f"{group}", value=d_c, key=f"comp_color_{group}")
 
-            if st.button("Apply Settings to All Plots", type="primary", use_container_width=True):
+            # FIXED: Added unique key here
+            if st.button("Apply Settings to All Plots", type="primary", use_container_width=True, key="comp_apply_settings_btn"):
                 for key in list(st.session_state.keys()):
                     if key.startswith("comp_") and key.endswith("_fig"):
                         st.session_state[key] = None
@@ -128,7 +129,6 @@ class ComparativeTab:
                     st.markdown("---")
                     st.markdown(f"**Found {len(sig_df)} significant proteins**")
                     
-                    # RESTORED: Metric Counts
                     up_count = len(sig_df[sig_df['Regulation'] == 'Up-regulated'])
                     down_count = len(sig_df[sig_df['Regulation'] == 'Down-regulated'])
                     m1, m2 = st.columns(2)
@@ -174,7 +174,6 @@ class ComparativeTab:
 
             with heat:
                 st.markdown("### Static Heatmap")
-                # RESTORED: Custom Selection
                 sel_method = st.radio("Select proteins to display:", ["All Significant", "Top 10 DE", "Up-regulated", "Down-regulated", "Custom Selection"])
                 prot_list = []
                 sig_df = st.session_state.significant_proteins
@@ -185,7 +184,6 @@ class ComparativeTab:
                 elif sel_method == "Up-regulated": prot_list = sig_df[sig_df['Regulation']=='Up-regulated'][pid].tolist()
                 elif sel_method == "Down-regulated": prot_list = sig_df[sig_df['Regulation']=='Down-regulated'][pid].tolist()
                 elif sel_method == "Custom Selection":
-                    # RESTORED: Interactive Dataframe for selection
                     protein_info_df = visualizer.protein_df[[visualizer.column_config['protein_id'], 'Gene Name']].drop_duplicates().reset_index(drop=True)
                     st.markdown("Select proteins from the table below:")
                     selection = st.dataframe(protein_info_df, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="heat_custom_sel")
@@ -193,7 +191,6 @@ class ComparativeTab:
                         prot_list = protein_info_df.iloc[selection.selection["rows"]][visualizer.column_config['protein_id']].tolist()
 
                 if prot_list:
-                    # Auto-generate without button for static plot
                     try: 
                         with st.spinner("Generating heatmap..."):
                             st.image(visualizer.plot_comparative_heatmap(prot_list))
@@ -232,7 +229,6 @@ class ComparativeTab:
             with path:
                 st.markdown("### Pathway Enrichment")
                 with st.expander("Configure Analysis", expanded=True):
-                    # RESTORED: Custom Selection
                     sel_g = st.selectbox("Select gene set:", ["All Significant", "Up-regulated", "Down-regulated", "Custom Selection"])
                     genes = []
                     
@@ -243,17 +239,16 @@ class ComparativeTab:
                     elif sel_g == "Down-regulated":
                         genes = sig_df[sig_df['Regulation']=='Down-regulated'].merge(visualizer.protein_df, left_on=pid, right_on=visualizer.column_config['protein_id'])['Gene Name'].dropna().unique().tolist()
                     elif sel_g == "Custom Selection":
-                        # RESTORED: Interactive DataFrame for Genes
                         prot_gene_df = visualizer.protein_df[[visualizer.column_config['protein_id'], 'Gene Name']].dropna().drop_duplicates()
                         st.markdown("Select genes from the table:")
                         gene_sel = st.dataframe(prot_gene_df, on_select="rerun", selection_mode="multi-row", key="path_custom_sel")
                         if gene_sel.selection["rows"]:
                             genes = prot_gene_df.iloc[gene_sel.selection["rows"]]['Gene Name'].tolist()
 
-                    # RESTORED: Organism Selector
                     organism = st.selectbox("Select organism:", ["human", "mouse"])
 
-                    if st.button("Run Analysis", type="primary"):
+                    # FIXED: Added unique key here
+                    if st.button("Run Analysis", type="primary", key="comp_run_pathway_btn"):
                         from utils.caching import run_cached_enrichment
                         if genes:
                             st.session_state.enrichment_results = run_cached_enrichment(visualizer, genes, organism)
