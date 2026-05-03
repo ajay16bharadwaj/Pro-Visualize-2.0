@@ -72,6 +72,8 @@ class SCPTab:
             st.session_state.scp_de_results = {}
         if "scp_score_cols" not in st.session_state:
             st.session_state.scp_score_cols = []
+        if "scp_enr_results" not in st.session_state:
+            st.session_state.scp_enr_results = None
 
     # ─────────────────────────────────────────────────────────────────────────
     # GLOBAL SETTINGS
@@ -711,6 +713,87 @@ class SCPTab:
         
         *Gene names must match your PG matrix protein group IDs (typically gene symbols).*
         """)
+
+        # -- From DE Results (GSEApy Enrichment) ------------------------------
+        if st.session_state.scp_de_results:
+            with st.expander("🔬 From DE Results (GSEApy Enrichment)", expanded=False):
+                de_groups_avail = viz.get_de_groups()
+                enr_group = st.selectbox("DE group:", de_groups_avail, key="scp_enr_group")
+
+                ec1, ec2, ec3 = st.columns(3)
+                enr_pval = ec1.select_slider(
+                    "adj p-val", [0.001, 0.01, 0.05, 0.1], value=0.05, key="scp_enr_pval"
+                )
+                enr_fc = ec2.slider("|log₂FC|", 0.0, 5.0, 1.0, 0.5, key="scp_enr_fc")
+                enr_dir = ec3.selectbox("Direction", ["both", "up", "down"], key="scp_enr_dir")
+
+                _DB_OPTIONS = [
+                    "KEGG_2021_Human",
+                    "Reactome_2022",
+                    "GO_Biological_Process_2023",
+                    "WikiPathways_2019_Human",
+                    "MSigDB_Hallmark_2020",
+                ]
+                enr_dbs = st.multiselect(
+                    "Gene set databases:", _DB_OPTIONS,
+                    default=["KEGG_2021_Human", "Reactome_2022"],
+                    key="scp_enr_dbs",
+                )
+
+                if st.button("Run Enrichment", type="primary",
+                             use_container_width=True, key="scp_run_enr"):
+                    with st.spinner("Running GSEApy Enrichr…"):
+                        try:
+                            enr_df = viz.run_gsea_enrichment(
+                                de_group=enr_group,
+                                pval_thresh=enr_pval,
+                                fc_thresh=enr_fc,
+                                gene_sets=enr_dbs,
+                                direction=enr_dir,
+                            )
+                            st.session_state.scp_enr_results = enr_df
+                            if enr_df.empty:
+                                st.warning("Enrichment returned no results. Try relaxing the p-val or FC filters, or choose different databases.")
+                            else:
+                                st.success(f"✓ {len(enr_df)} enriched terms found.")
+                        except Exception as e:
+                            st.error(f"Enrichment failed: {e}")
+
+                enr_res = st.session_state.scp_enr_results
+                if enr_res is not None and not enr_res.empty:
+                    available_cols = enr_res.columns.tolist()
+                    display_cols = [c for c in ["Gene_set", "Term", "Overlap", "Adjusted P-value", "Genes"] if c in available_cols]
+                    enr_show = enr_res[display_cols].sort_values("Adjusted P-value") if "Adjusted P-value" in display_cols else enr_res[display_cols]
+                    st.dataframe(enr_show, use_container_width=True)
+
+                    selected_terms = st.multiselect(
+                        "Select pathways to use as activity score inputs:",
+                        enr_show["Term"].tolist(),
+                        key="scp_enr_selected_terms",
+                    )
+
+                    if selected_terms and st.button(
+                        "Add Selected Pathways to Activity Scores",
+                        use_container_width=True, key="scp_enr_add"
+                    ):
+                        pathway_gene_sets = {}
+                        for _, row in enr_res[enr_res["Term"].isin(selected_terms)].iterrows():
+                            genes = [g.strip() for g in str(row["Genes"]).split(";") if g.strip()]
+                            short_name = row["Term"][:30].replace(" ", "_").replace("/", "_")
+                            pathway_gene_sets[short_name] = genes
+
+                        with st.spinner("Computing per-cell activity scores from pathways…"):
+                            computed = viz.compute_activity_scores(pathway_gene_sets)
+                        st.session_state.scp_score_cols = computed
+                        for k in ["scp_activity_umap", "scp_activity_violin"]:
+                            st.session_state[f"{k}_fig"] = None
+                        if computed:
+                            st.success(f"✓ Scored: {', '.join(computed)}")
+                        else:
+                            st.error("No pathways had ≥3 matching proteins in your data.")
+                        st.rerun()
+        else:
+            st.info("Run Differential Expression (Tab 4) first to enable pathway enrichment here.")
 
         # -- Gene set input ---------------------------------------------------
         with st.expander("🧬 Define Gene / Protein Sets", expanded=True):

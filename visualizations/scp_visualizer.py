@@ -622,6 +622,55 @@ class SCPVisualizer:
 
         return computed
 
+    def run_gsea_enrichment(
+        self,
+        de_group: str,
+        pval_thresh: float = 0.05,
+        fc_thresh: float = 1.0,
+        gene_sets: list = None,
+        direction: str = "both",
+    ) -> "pd.DataFrame":
+        import gseapy as gp
+
+        if gene_sets is None:
+            gene_sets = ["KEGG_2021_Human", "Reactome_2022", "GO_Biological_Process_2023"]
+
+        de_df = self.get_de_results(de_group)
+        if de_df.empty:
+            raise ValueError(f"No DE results for group '{de_group}'.")
+
+        sig = de_df[(de_df["pval_adj"] < pval_thresh) & (de_df["log2FC"].abs() > fc_thresh)]
+        if direction == "up":
+            sig = sig[sig["log2FC"] > 0]
+        elif direction == "down":
+            sig = sig[sig["log2FC"] < 0]
+
+        dep_list = sig["protein"].dropna().tolist()
+        if len(dep_list) < 3:
+            raise ValueError(
+                f"Only {len(dep_list)} DEPs pass the current filters (need ≥3). "
+                "Try relaxing the p-value or log₂FC thresholds."
+            )
+
+        enr = gp.enrichr(
+            gene_list=dep_list,
+            gene_sets=gene_sets,
+            organism="human",
+            outdir=None,
+            verbose=False,
+        )
+        results = enr.results
+        if results.empty:
+            return pd.DataFrame()
+        # Normalise column names across gseapy versions
+        results.columns = [c.strip() for c in results.columns]
+        adj_col = next(
+            (c for c in results.columns if "adjusted" in c.lower() and "p" in c.lower()), None
+        )
+        if adj_col and adj_col != "Adjusted P-value":
+            results = results.rename(columns={adj_col: "Adjusted P-value"})
+        return results.sort_values("Adjusted P-value")
+
     def get_available_score_cols(self) -> list:
         return [c for c in self.adata.obs.columns if c.endswith("_score")]
 
