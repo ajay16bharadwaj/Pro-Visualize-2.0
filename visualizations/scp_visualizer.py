@@ -184,7 +184,11 @@ class SCPVisualizer:
             used_samples = self._annotation_raw["_matrix_col"].dropna().tolist()
             anno_index_col = "_matrix_col"
 
-        # Subset PG matrix to matched samples
+        # Save non-sample metadata columns (e.g. Genes, Gene.Names) before subsetting
+        meta_cols = [c for c in pg_df.columns if c not in set(used_samples)]
+        var_meta = pg_df[meta_cols].copy() if meta_cols else pd.DataFrame(index=pg_df.index)
+
+        # Subset PG matrix to matched samples only
         pg_df = pg_df[[s for s in used_samples if s in pg_df.columns]]
 
         # Build obs from annotation (indexed by matrix column name)
@@ -197,7 +201,7 @@ class SCPVisualizer:
 
         # X: cells × proteins  (NaN → 0 deferred to preprocess step)
         X = pg_df.T.values.astype(float)
-        var_df = pd.DataFrame(index=pg_df.index)
+        var_df = var_meta.reindex(pg_df.index)
 
         adata = sc.AnnData(X=X, obs=obs_df, var=var_df)
         adata.layers["input"] = X.copy()
@@ -652,8 +656,59 @@ class SCPVisualizer:
                 "Try relaxing the p-value or log₂FC thresholds."
             )
 
+        # Resolve gene symbols for Enrichr.
+        # Priority 1: gene-name column already in adata.var (preserved from PG matrix)
+        # Priority 2: fetch from UniProt for just the significant DEPs (lazy / on demand)
+        # Priority 3: split the protein ID on ";" as a last resort
+        _GENE_COL_CANDIDATES = ["Genes", "Gene.Names", "Gene names", "Gene", "gene_names"]
+        gene_col = next(
+            (c for c in _GENE_COL_CANDIDATES if c in self.adata.var.columns), None
+        )
+
+        if gene_col is None:
+            logger.info("No gene-name column in adata.var — querying UniProt for significant DEPs.")
+            try:
+                acc_map = {p: self._parse_uniprot_accession(p) for p in dep_list}
+                fetched = self._fetch_uniprot_gene_names(list(dict.fromkeys(acc_map.values())))
+                if fetched:
+                    if "Genes" not in self.adata.var.columns:
+                        self.adata.var["Genes"] = ""
+                    for protein, acc in acc_map.items():
+                        if acc in fetched and protein in self.adata.var.index:
+                            self.adata.var.at[protein, "Genes"] = fetched[acc]
+                    gene_col = "Genes"
+                    logger.info(f"UniProt resolved {len(fetched)} accessions to gene symbols.")
+            except Exception as exc:
+                logger.warning(f"UniProt fallback failed: {exc}")
+
+        gene_list: list[str] = []
+        for protein in dep_list:
+            if gene_col and protein in self.adata.var.index:
+                raw = str(self.adata.var.at[protein, gene_col])
+            else:
+                raw = protein
+            for sym in raw.split(";"):
+                sym = sym.strip()
+                if sym and sym.lower() != "nan":
+                    gene_list.append(sym)
+        gene_list = list(dict.fromkeys(gene_list))  # deduplicate, preserve order
+        logger.info(
+            f"Enrichment input: {len(dep_list)} protein groups → {len(gene_list)} gene symbols"
+            + (f" (via adata.var['{gene_col}'])" if gene_col else " (split from protein ID)")
+        )
+
+        if len(gene_list) < 3:
+            raise ValueError(
+                f"Only {len(gene_list)} unique gene symbols after parsing (need ≥3). "
+                + (
+                    f"Check that the '{gene_col}' column contains valid gene symbols."
+                    if gene_col
+                    else "Consider using 'Fetch Gene Names from UniProt' in the Upload tab."
+                )
+            )
+
         enr = gp.enrichr(
-            gene_list=dep_list,
+            gene_list=gene_list,
             gene_sets=gene_sets,
             organism="human",
             outdir=None,
@@ -673,6 +728,76 @@ class SCPVisualizer:
 
     def get_available_score_cols(self) -> list:
         return [c for c in self.adata.obs.columns if c.endswith("_score")]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # UNIPROT GENE NAME ANNOTATION
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_uniprot_accession(protein_id: str) -> str:
+        """Extract the primary UniProt accession from a protein group ID.
+
+        Handles:
+        - Semicolon-separated groups: 'P12345;Q67890' → 'P12345'
+        - Isoform suffixes:           'P12345-2'      → 'P12345'
+        """
+        primary = str(protein_id).split(";")[0].strip()
+        return primary.split("-")[0].strip()
+
+    @staticmethod
+    def _fetch_uniprot_gene_names(
+        accessions: list, batch_size: int = 200
+    ) -> dict:
+        """Batch-query the UniProt REST API.
+
+        Returns {accession: first_gene_symbol}.  Accessions not found in UniProt
+        are simply absent from the returned dict.
+        """
+        import requests
+
+        result = {}
+        unique = list(dict.fromkeys(a for a in accessions if a))
+        for i in range(0, len(unique), batch_size):
+            batch = unique[i : i + batch_size]
+            query = " OR ".join(f"accession:{acc}" for acc in batch)
+            try:
+                resp = requests.get(
+                    "https://rest.uniprot.org/uniprotkb/search",
+                    params={
+                        "query": query,
+                        "fields": "accession,gene_names",
+                        "format": "tsv",
+                        "size": batch_size,
+                    },
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                for line in resp.text.strip().split("\n")[1:]:
+                    parts = line.split("\t")
+                    if len(parts) >= 2 and parts[1].strip():
+                        result[parts[0].strip()] = parts[1].strip().split(" ")[0]
+            except Exception as exc:
+                logger.warning(f"UniProt batch {i//batch_size + 1} failed: {exc}")
+        return result
+
+    def annotate_gene_names_from_uniprot(self) -> int:
+        """Query UniProt for gene symbols for all proteins in adata.var.
+
+        Stores results in adata.var['Genes'].
+        Returns the number of proteins that received a gene symbol.
+        """
+        var_names = self.adata.var_names.tolist()
+        acc_map = {vn: self._parse_uniprot_accession(vn) for vn in var_names}
+        gene_map = self._fetch_uniprot_gene_names(list(dict.fromkeys(acc_map.values())))
+
+        self.adata.var["Genes"] = [
+            gene_map.get(acc_map[vn], "") for vn in var_names
+        ]
+        n = int((self.adata.var["Genes"] != "").sum())
+        logger.info(
+            f"UniProt annotation: {n}/{len(var_names)} proteins mapped to gene symbols"
+        )
+        return n
 
     # ─────────────────────────────────────────────────────────────────────────
     # COVARIATE CORRELATION ANALYSIS

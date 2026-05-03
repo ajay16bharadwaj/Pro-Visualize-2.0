@@ -205,6 +205,38 @@ class SCPTab:
         viz = _viz()
         st.markdown("---")
 
+        # ── Gene Name Annotation ──────────────────────────────────────────────
+        _GENE_COL_CANDIDATES = ["Genes", "Gene.Names", "Gene names", "Gene", "gene_names"]
+        _detected_gene_col = next(
+            (c for c in _GENE_COL_CANDIDATES if c in viz.adata.var.columns), None
+        )
+        if _detected_gene_col:
+            st.caption(f"Gene names: using `{_detected_gene_col}` column from PG matrix.")
+        else:
+            st.warning(
+                "No gene name column found in the PG matrix. "
+                "Gene symbols are required for pathway enrichment. "
+                "Click below to fetch them from UniProt using your protein accessions."
+            )
+            if st.button(
+                "Fetch Gene Names from UniProt",
+                key="scp_fetch_uniprot",
+                use_container_width=True,
+            ):
+                with st.spinner(
+                    f"Querying UniProt for {viz.adata.n_vars} proteins… "
+                    "(batched, may take ~10–30 s)"
+                ):
+                    try:
+                        n_mapped = viz.annotate_gene_names_from_uniprot()
+                        st.success(
+                            f"Annotated {n_mapped}/{viz.adata.n_vars} proteins with gene symbols "
+                            f"from UniProt. These will be used for pathway enrichment."
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"UniProt lookup failed: {e}")
+
         # ── QC Metrics Table ─────────────────────────────────────────────────
         with st.expander("📋 Data Overview", expanded=False):
             c1, c2, c3, c4 = st.columns(4)
@@ -740,6 +772,34 @@ class SCPTab:
                     key="scp_enr_dbs",
                 )
 
+                # Show live preview of proteins that will pass the current filters
+                _de_preview = viz.get_de_results(enr_group)
+                if not _de_preview.empty:
+                    _sig_preview = _de_preview[
+                        (_de_preview["pval_adj"] < enr_pval)
+                        & (_de_preview["log2FC"].abs() > enr_fc)
+                    ]
+                    if enr_dir == "up":
+                        _sig_preview = _sig_preview[_sig_preview["log2FC"] > 0]
+                    elif enr_dir == "down":
+                        _sig_preview = _sig_preview[_sig_preview["log2FC"] < 0]
+                    _n_sig = len(_sig_preview)
+                    _preview_names = ", ".join(_sig_preview["protein"].dropna().head(5).tolist())
+                    _gene_col_candidates = ["Genes", "Gene.Names", "Gene names", "Gene", "gene_names"]
+                    _detected_gene_col = next(
+                        (c for c in _gene_col_candidates if c in viz.adata.var.columns), None
+                    )
+                    _gene_col_note = (
+                        f" | Gene symbols from `{_detected_gene_col}`"
+                        if _detected_gene_col
+                        else " | ⚠️ No gene-name column detected — splitting protein IDs on `;`"
+                    )
+                    st.caption(
+                        f"{_n_sig} protein group(s) pass current filters"
+                        + (f" — e.g. {_preview_names}" if _preview_names else "")
+                        + _gene_col_note
+                    )
+
                 if st.button("Run Enrichment", type="primary",
                              use_container_width=True, key="scp_run_enr"):
                     with st.spinner("Running GSEApy Enrichr…"):
@@ -753,7 +813,13 @@ class SCPTab:
                             )
                             st.session_state.scp_enr_results = enr_df
                             if enr_df.empty:
-                                st.warning("Enrichment returned no results. Try relaxing the p-val or FC filters, or choose different databases.")
+                                st.warning(
+                                    "Enrichment returned no results. "
+                                    "If protein names above contain semicolons or UniProt IDs "
+                                    "instead of gene symbols, consider using a gene-name column "
+                                    "as your Protein ID when loading data. "
+                                    "Also try relaxing the p-val / FC filters or choosing different databases."
+                                )
                             else:
                                 st.success(f"✓ {len(enr_df)} enriched terms found.")
                         except Exception as e:
