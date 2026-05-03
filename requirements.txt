@@ -23,5 +23,14 @@ gprofiler-official==1.0.0
 requests==2.32.3
 networkx==3.3
 
+# --- Single-Cell Proteomics (SCP) ---
+# Core single-cell framework (AnnData, scanpy algorithms)
+scanpy>=1.10.0
+anndata>=0.10.0
+# Batch correction (optional – required only for Harmony integration)
+#harmonypy>=0.0.9
+# Gene-set enrichment (optional – used in GSEA blocks)
+gseapy>=1.1.0
+
 # --- Web Application Framework ---
 streamlit==1.36.0

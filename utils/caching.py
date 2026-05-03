@@ -30,3 +30,8 @@ def run_cached_enrichment(_visualizer: ComparativeVisualizer, gene_list: list, o
     mechanism not to hash the object itself, but to treat it as a stable component.
     """
     return _visualizer.run_enrichment_analysis(gene_list, organism)
+
+# NOTE: SCPVisualizer is intentionally NOT cached via @st.cache_data because it
+# is mutated in-place through the preprocessing pipeline (normalization, regression,
+# PCA, UMAP, clustering).  It is stored directly in st.session_state.scp_visualizer
+# and persists across reruns within the session.
