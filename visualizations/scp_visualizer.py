@@ -590,13 +590,31 @@ class SCPVisualizer:
     # ACTIVITY SCORING
     # ─────────────────────────────────────────────────────────────────────────
 
-    def compute_activity_scores(self, gene_sets: dict) -> list:
-        """
-        Compute per-cell activity scores using scanpy's score_genes.
+    def _build_gene_symbol_map(self) -> dict:
+        """Return {gene_symbol: var_name} from adata.var gene-name columns.
 
-        Parameters
-        ----------
+        Used so that enrichment results (gene symbols) can be resolved to
+        var_names (which may be UniProt accessions) before scoring.
+        """
+        _GENE_COL_CANDIDATES = ["Genes", "Gene.Names", "Gene names", "Gene", "gene_names"]
+        gene_col = next((c for c in _GENE_COL_CANDIDATES if c in self.adata.var.columns), None)
+        if not gene_col:
+            return {}
+        mapping = {}
+        for var_name, gene_sym in self.adata.var[gene_col].items():
+            sym = str(gene_sym).strip()
+            if sym.lower() not in ("", "nan", "none", "na"):
+                mapping[sym] = var_name
+        return mapping
+
+    def compute_activity_scores(self, gene_sets: dict) -> list:
+        """Compute per-cell activity scores using scanpy's score_genes.
+
         gene_sets : dict  {score_name: [gene1, gene2, ...]}
+
+        Genes can be var_names (protein group IDs) OR gene symbols — both are
+        resolved via a symbol→var_name lookup so enrichment pathway genes
+        (always gene symbols) work even when var_names are UniProt accessions.
 
         Returns list of successfully computed score column names.
         """
@@ -604,22 +622,30 @@ class SCPVisualizer:
             self.adata.X = self.adata.layers["log1p"].copy()
 
         available = set(self.adata.var_names)
+        sym_to_var = self._build_gene_symbol_map()
         computed = []
 
         for name, genes in gene_sets.items():
-            filtered = [g for g in genes if g in available]
-            if len(filtered) < 3:
+            resolved = []
+            for g in genes:
+                if g in available:
+                    resolved.append(g)
+                elif g in sym_to_var:
+                    resolved.append(sym_to_var[g])
+            resolved = list(dict.fromkeys(resolved))  # deduplicate, preserve order
+
+            if len(resolved) < 3:
                 logger.warning(
-                    f"Gene set '{name}': only {len(filtered)} genes matched in data (need ≥3). "
-                    f"Check gene naming (expects gene symbols matching protein group names)."
+                    f"Gene set '{name}': only {len(resolved)} genes matched in data (need ≥3). "
+                    f"Tried direct var_name match and gene-symbol lookup."
                 )
                 continue
             score_col = f"{name}_score"
             sc.tl.score_genes(
-                self.adata, gene_list=filtered, score_name=score_col, use_raw=False
+                self.adata, gene_list=resolved, score_name=score_col, use_raw=False
             )
             logger.info(
-                f"Scored '{name}' ({len(filtered)} genes): "
+                f"Scored '{name}' ({len(resolved)} genes): "
                 f"mean={self.adata.obs[score_col].mean():.3f}"
             )
             computed.append(score_col)
@@ -738,28 +764,38 @@ class SCPVisualizer:
         """Extract the primary UniProt accession from a protein group ID.
 
         Handles:
-        - Semicolon-separated groups: 'P12345;Q67890' → 'P12345'
-        - Isoform suffixes:           'P12345-2'      → 'P12345'
+        - Semicolon-separated groups:  'P12345;Q67890'              → 'P12345'
+        - Isoform suffixes:            'P12345-2'                   → 'P12345'
+        - FASTA-style IDs:             'sp|P12345|GENE_HUMAN'       → 'P12345'
+        - Contaminant prefixed IDs:    'contam_sp|O43790|KRT86_HUMAN' → 'O43790'
         """
         primary = str(protein_id).split(";")[0].strip()
+        # FASTA-style: [prefix]|ACCESSION|NAME  — accession is always the middle field
+        if "|" in primary:
+            parts = primary.split("|")
+            if len(parts) >= 2:
+                primary = parts[1]
         return primary.split("-")[0].strip()
 
     @staticmethod
     def _fetch_uniprot_gene_names(
-        accessions: list, batch_size: int = 200
+        accessions: list, batch_size: int = 50
     ) -> dict:
-        """Batch-query the UniProt REST API.
+        """Batch-query the UniProt REST API (GET, ≤50 accessions per request).
 
-        Returns {accession: first_gene_symbol}.  Accessions not found in UniProt
-        are simply absent from the returned dict.
+        UniProt enforces a ~75-accession URL length limit; 50 keeps us safely under it.
+        Returns {accession: first_gene_symbol}.  Failed batches are skipped so
+        partial results are always returned.
         """
         import requests
 
         result = {}
         unique = list(dict.fromkeys(a for a in accessions if a))
+        n_batches = (len(unique) + batch_size - 1) // batch_size
         for i in range(0, len(unique), batch_size):
             batch = unique[i : i + batch_size]
             query = " OR ".join(f"accession:{acc}" for acc in batch)
+            batch_num = i // batch_size + 1
             try:
                 resp = requests.get(
                     "https://rest.uniprot.org/uniprotkb/search",
@@ -776,8 +812,12 @@ class SCPVisualizer:
                     parts = line.split("\t")
                     if len(parts) >= 2 and parts[1].strip():
                         result[parts[0].strip()] = parts[1].strip().split(" ")[0]
+                logger.info(
+                    f"UniProt batch {batch_num}/{n_batches}: "
+                    f"{len(batch)} queried, {len(result)} total resolved."
+                )
             except Exception as exc:
-                logger.warning(f"UniProt batch {i//batch_size + 1} failed: {exc}")
+                logger.warning(f"UniProt batch {batch_num}/{n_batches} failed: {exc}")
         return result
 
     def annotate_gene_names_from_uniprot(self) -> int:

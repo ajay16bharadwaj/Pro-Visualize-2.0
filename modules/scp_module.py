@@ -206,15 +206,27 @@ class SCPTab:
         st.markdown("---")
 
         # ── Gene Name Annotation ──────────────────────────────────────────────
+        def _n_valid_genes(series):
+            return int((
+                series.notna()
+                & ~series.astype(str).str.strip().str.lower().isin({"", "nan", "none", "na"})
+            ).sum())
+
         _GENE_COL_CANDIDATES = ["Genes", "Gene.Names", "Gene names", "Gene", "gene_names"]
         _detected_gene_col = next(
-            (c for c in _GENE_COL_CANDIDATES if c in viz.adata.var.columns), None
+            (c for c in _GENE_COL_CANDIDATES
+             if c in viz.adata.var.columns and _n_valid_genes(viz.adata.var[c]) > 0),
+            None,
         )
         if _detected_gene_col:
-            st.caption(f"Gene names: using `{_detected_gene_col}` column from PG matrix.")
+            _n_sym = _n_valid_genes(viz.adata.var[_detected_gene_col])
+            st.caption(
+                f"Gene names: `{_detected_gene_col}` — "
+                f"{_n_sym}/{viz.adata.n_vars} proteins have a gene symbol."
+            )
         else:
             st.warning(
-                "No gene name column found in the PG matrix. "
+                "No gene name column found in the PG matrix (or the column is empty). "
                 "Gene symbols are required for pathway enrichment. "
                 "Click below to fetch them from UniProt using your protein accessions."
             )
@@ -229,11 +241,19 @@ class SCPTab:
                 ):
                     try:
                         n_mapped = viz.annotate_gene_names_from_uniprot()
-                        st.success(
-                            f"Annotated {n_mapped}/{viz.adata.n_vars} proteins with gene symbols "
-                            f"from UniProt. These will be used for pathway enrichment."
-                        )
-                        st.rerun()
+                        if n_mapped == 0:
+                            st.error(
+                                "UniProt returned 0 gene symbols. "
+                                "Check that your protein IDs are UniProt accessions "
+                                "(e.g. P12345). If they are a different format, "
+                                "consider using a gene-name column as 'Protein column' at upload."
+                            )
+                        else:
+                            st.success(
+                                f"Annotated {n_mapped}/{viz.adata.n_vars} proteins with "
+                                f"gene symbols from UniProt."
+                            )
+                            st.rerun()
                     except Exception as e:
                         st.error(f"UniProt lookup failed: {e}")
 
@@ -246,7 +266,25 @@ class SCPTab:
                       int(viz.adata.obs["n_proteins"].median()))
             c4.metric("Mean detection %",
                       f"{viz.adata.obs['pct_detected'].mean():.1f}%")
-            st.dataframe(viz.get_obs_df().describe(include="all").T, height=200)
+
+            _ov_cell_tab, _ov_prot_tab = st.tabs(["Cell Metadata", "Protein Metadata"])
+            with _ov_cell_tab:
+                st.dataframe(viz.get_obs_df().describe(include="all").T, height=200)
+            with _ov_prot_tab:
+                _var_df = viz.adata.var.copy()
+                _var_df.index.name = "protein_id"
+                _GENE_COLS = ["Genes", "Gene.Names", "Gene names", "Gene", "gene_names"]
+                _gene_col = next((c for c in _GENE_COLS if c in _var_df.columns), None)
+                if _gene_col:
+                    n_with_gene = _n_valid_genes(_var_df[_gene_col])
+                    st.caption(
+                        f"Gene name column: `{_gene_col}` — "
+                        f"{n_with_gene}/{len(_var_df)} proteins have a gene symbol."
+                        + (" ⚠️ Column present but all empty." if n_with_gene == 0 else "")
+                    )
+                else:
+                    st.caption("No gene name column in adata.var. Use 'Fetch Gene Names from UniProt' above.")
+                st.dataframe(_var_df.reset_index(), use_container_width=True, height=300)
 
         # ── Groupby selector ─────────────────────────────────────────────────
         groupby_cols = viz.get_available_groupby_cols()
@@ -740,15 +778,13 @@ class SCPTab:
 
         st.markdown("""
         **Per-cell activity scoring** uses `scanpy.tl.score_genes` to compute a summary
-        expression score for each gene/protein set. Proteins not present in your data are
-        automatically excluded.
-        
-        *Gene names must match your PG matrix protein group IDs (typically gene symbols).*
+        expression score for each gene/protein set. Run DE → Run Enrichment → select
+        pathways below → Compute Activity Scores.
         """)
 
         # -- From DE Results (GSEApy Enrichment) ------------------------------
         if st.session_state.scp_de_results:
-            with st.expander("🔬 From DE Results (GSEApy Enrichment)", expanded=False):
+            with st.expander("🔬 From DE Results (GSEApy Enrichment)", expanded=True):
                 de_groups_avail = viz.get_de_groups()
                 enr_group = st.selectbox("DE group:", de_groups_avail, key="scp_enr_group")
 
@@ -787,7 +823,11 @@ class SCPTab:
                     _preview_names = ", ".join(_sig_preview["protein"].dropna().head(5).tolist())
                     _gene_col_candidates = ["Genes", "Gene.Names", "Gene names", "Gene", "gene_names"]
                     _detected_gene_col = next(
-                        (c for c in _gene_col_candidates if c in viz.adata.var.columns), None
+                        (c for c in _gene_col_candidates
+                         if c in viz.adata.var.columns
+                         and viz.adata.var[c].notna().any()
+                         and not viz.adata.var[c].astype(str).str.strip().str.lower().isin({"", "nan", "none", "na"}).all()),
+                        None,
                     )
                     _gene_col_note = (
                         f" | Gene symbols from `{_detected_gene_col}`"
@@ -838,17 +878,51 @@ class SCPTab:
                         key="scp_enr_selected_terms",
                     )
 
+                    if selected_terms:
+                        # Preview how many genes from each selected pathway match the data.
+                        # If the gene map only covers DEPs (<50%), note that full annotation
+                        # will run automatically when the button is clicked.
+                        sym_to_var = viz._build_gene_symbol_map()
+                        available_prots = set(viz.adata.var_names)
+                        gene_map_sparse = len(sym_to_var) < viz.adata.n_vars * 0.5
+                        if gene_map_sparse:
+                            st.caption(
+                                f"ℹ️ Gene names only resolved for {len(sym_to_var)}/{viz.adata.n_vars} proteins so far. "
+                                "Full UniProt annotation will run automatically when you click the button below."
+                            )
+                        for term in selected_terms:
+                            row = enr_res[enr_res["Term"] == term].iloc[0]
+                            genes = [g.strip() for g in str(row["Genes"]).split(";") if g.strip()]
+                            matched = [g for g in genes if g in available_prots or g in sym_to_var]
+                            st.caption(
+                                f"**{term[:50]}**: {len(matched)}/{len(genes)} genes matched"
+                                + (" (more expected after full annotation)" if gene_map_sparse and len(matched) == 0 else "")
+                                + (" ⚠️ < 3 — will be skipped" if len(matched) < 3 and not gene_map_sparse else "")
+                            )
+
                     if selected_terms and st.button(
-                        "Add Selected Pathways to Activity Scores",
+                        "Compute Activity Scores from Selected Pathways",
+                        type="primary",
                         use_container_width=True, key="scp_enr_add"
                     ):
+                        # Gene symbol map may only cover DEPs from the enrichment run.
+                        # If it covers <50% of proteins, fetch all gene names first so
+                        # every pathway gene can be resolved to a var_name.
+                        sym_to_var_check = viz._build_gene_symbol_map()
+                        if len(sym_to_var_check) < viz.adata.n_vars * 0.5:
+                            with st.spinner(
+                                f"Fetching gene names from UniProt for all "
+                                f"{viz.adata.n_vars} proteins first…"
+                            ):
+                                viz.annotate_gene_names_from_uniprot()
+
                         pathway_gene_sets = {}
                         for _, row in enr_res[enr_res["Term"].isin(selected_terms)].iterrows():
                             genes = [g.strip() for g in str(row["Genes"]).split(";") if g.strip()]
                             short_name = row["Term"][:30].replace(" ", "_").replace("/", "_")
                             pathway_gene_sets[short_name] = genes
 
-                        with st.spinner("Computing per-cell activity scores from pathways…"):
+                        with st.spinner("Computing per-cell activity scores…"):
                             computed = viz.compute_activity_scores(pathway_gene_sets)
                         st.session_state.scp_score_cols = computed
                         for k in ["scp_activity_umap", "scp_activity_violin"]:
@@ -860,64 +934,6 @@ class SCPTab:
                         st.rerun()
         else:
             st.info("Run Differential Expression (Tab 4) first to enable pathway enrichment here.")
-
-        # -- Gene set input ---------------------------------------------------
-        with st.expander("🧬 Define Gene / Protein Sets", expanded=True):
-            st.markdown(
-                "Enter one gene set per text area. Gene names separated by newlines, commas, or spaces."
-            )
-            n_sets = st.number_input(
-                "Number of gene sets", 1, 10, 3, key="scp_n_sets"
-            )
-            gene_sets_raw = {}
-            cols = st.columns(2)
-            for i in range(n_sets):
-                with cols[i % 2]:
-                    name = st.text_input(
-                        f"Set {i+1} name", value=f"Pathway_{i+1}", key=f"scp_set_name_{i}"
-                    )
-                    genes_text = st.text_area(
-                        f"Genes for {name}",
-                        height=120,
-                        key=f"scp_set_genes_{i}",
-                        help="Enter gene symbols, one per line or comma-separated",
-                        placeholder="e.g.\nCOX1\nCOX2\nNDUFA1\nATP5A1"
-                    )
-                    if genes_text.strip():
-                        import re
-                        genes = [
-                            g.strip() for g in re.split(r"[\n,; ]+", genes_text.strip())
-                            if g.strip()
-                        ]
-                        gene_sets_raw[name] = genes
-
-            # Preview overlap
-            if gene_sets_raw:
-                available_prots = set(viz.adata.var_names)
-                for name, genes in gene_sets_raw.items():
-                    found = [g for g in genes if g in available_prots]
-                    st.caption(
-                        f"**{name}**: {len(found)}/{len(genes)} genes matched in data"
-                        + (" ⚠️ < 3 — will be skipped" if len(found) < 3 else "")
-                    )
-
-            if st.button(
-                "Compute Activity Scores", type="primary",
-                use_container_width=True, key="scp_compute_scores"
-            ):
-                if not gene_sets_raw:
-                    st.warning("Define at least one gene set above.")
-                else:
-                    with st.spinner("Computing per-cell activity scores…"):
-                        computed = viz.compute_activity_scores(gene_sets_raw)
-                    st.session_state.scp_score_cols = computed
-                    for k in ["scp_activity_umap", "scp_activity_violin"]:
-                        st.session_state[f"{k}_fig"] = None
-                    if computed:
-                        st.success(f"✓ Scored: {', '.join(computed)}")
-                    else:
-                        st.error("No gene sets had ≥3 matching proteins in the data.")
-                    st.rerun()
 
         # -- Score summary ----------------------------------------------------
         existing_scores = viz.get_available_score_cols()
