@@ -4,13 +4,17 @@ import streamlit as st
 
 # Import the new class for the Targeted QC tab
 from modules.qc_tabs.targeted_qc_tab import TargetedQcTab 
+from modules.qc_tabs.dia_qc_tab import DiaQcTab
 
 # You would keep your imports and UI function for the DIA tab
 # from modules.dia_qc_tab import DiaQcTab # (If you also make one for DIA)
 
 # Dummy placeholder for the DIA tab UI function
 def render_dia_qc_ui():
-    st.info("This is the placeholder for the DIA QC tab.")
+    #st.info("This is the placeholder for the DIA QC tab.")
+    dia_qc_page = DiaQcTab()
+    dia_qc_page.render()
+
 
 def render():
     """Renders the main QC page with tabs for different analysis types."""

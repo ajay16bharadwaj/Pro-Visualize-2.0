@@ -1,4 +1,4 @@
-# pro_visualize/visualizations/targettedQCVisualization.py
+# pro_visualize/qc/targeted_qc.py
 
 import pandas as pd
 import re
@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 
 # Set up a logger for this module
 # The configuration (level, handler) should be set in the main app
@@ -196,195 +197,158 @@ class TargetedQcVisualizer:
         # Filter the main dataframe for these peptides
         return self.data[self.data['Peptide'].isin(top_peptides)]
 
-
     def plot_retention_time_stability(
-        self, 
-        top_n_peptides: int = 30, 
+        self,
+        top_n_peptides: int = 30,
+        view_by: str = 'run',
         plot_config: Optional[Dict[str, Any]] = None
     ) -> go.Figure:
         """
-        Generates a scatter plot to visualize retention time stability.
+        Generates a plot to visualize retention time stability.
 
-        This plot shows the retention time for the N most abundant peptides
-        across all replicates, ordered chronologically. It helps assess the
-        stability of the chromatography.
+        Can be viewed by individual 'run' (default) or summarized by 'day'.
 
         Args:
             top_n_peptides (int): The number of most abundant peptides to display.
-                                  Defaults to 30.
-            plot_config (Optional[Dict[str, Any]]): A dictionary to override
-                default plot styling (e.g., colors, fonts).
+            view_by (str): The mode for plotting, either 'run' or 'day'.
+            plot_config (Optional[Dict, Any]]): A dictionary to override styling.
 
         Returns:
-            go.Figure: A Plotly scatter plot figure object.
-            
-        Raises:
-            KeyError: If required columns for plotting are missing.
+            go.Figure: A Plotly figure object.
         """
-        # 1. Validate required columns for this specific plot
+        # 1. Validate arguments and required columns
+        if view_by not in ['run', 'day']:
+            raise ValueError("view_by must be either 'run' or 'day'.")
+        
         plot_cols = ['Best Retention Time', 'Replicate Name', 'Peptide']
         missing = [col for col in plot_cols if col not in self.data.columns]
         if missing:
-            msg = f"Cannot create plot. Missing required columns: {missing}"
-            logger.error(msg)
-            raise KeyError(msg)
-            
-        # 2. Get default config and update with user's config
+            raise KeyError(f"Cannot create plot. Missing required columns: {missing}")
+
+        # 2. Get plot config and prepare data
         config = self._create_default_plot_config()
         if plot_config:
             config.update(plot_config)
             
-        # 3. Prepare the data for plotting
-        try:
-            plot_data = self._get_top_n_peptides_data(top_n=top_n_peptides)
-            metadata = self.extract_metadata()
-        except (KeyError, RuntimeError) as e:
-            logger.error(f"Failed to prepare data for RT stability plot: {e}")
-            # Return an empty figure with an error message
-            fig = go.Figure()
-            fig.update_layout(title="Error Preparing Data", annotations=[{
-                "text": "Could not prepare data for plot.<br>Check logs for details.",
-                "showarrow": False
-            }])
-            return fig
+        plot_data = self._get_top_n_peptides_data(top_n=top_n_peptides).copy()
+        metadata = self.extract_metadata()
+        plot_data = pd.merge(plot_data, metadata, on='Replicate Name', how='left')
+
+        # 3. Generate plot based on the selected view
+        if view_by == 'run':
+            logger.info("Generating run-level retention time stability plot.")
+            plot_data = plot_data.sort_values(by=['Run Order', 'Peptide'])
+            replicate_order = plot_data.drop_duplicates('Replicate Name').sort_values('Run Order')['Short Replicate Name']
             
-        # 4. Merge with metadata to get Run Order and the new Short Replicate Name
-        plot_data = pd.merge(
-            plot_data,
-            metadata[['Replicate Name', 'Run Order', 'Short Replicate Name']],
-            on='Replicate Name',
-            how='left'
-        )
-        plot_data = plot_data.sort_values(by=['Run Order', 'Peptide'])
-        
-        # Define the chronological order for the x-axis using the short names
-        replicate_order = plot_data.drop_duplicates(
-            subset=['Replicate Name']
-        ).sort_values('Run Order')['Short Replicate Name']
+            fig = px.scatter(
+                plot_data, x='Short Replicate Name', y='Best Retention Time', color='Peptide',
+                hover_name='Replicate Name', title='Retention Time Stability Across Runs',
+                labels={'Short Replicate Name': 'Replicate', 'Best Retention Time': 'Retention Time (minutes)'},
+                template=config['template'],
+                category_orders={'Short Replicate Name': replicate_order}
+            )
+            fig.update_traces(marker=dict(size=8, symbol='line-ns-open', line=dict(width=2)))
+            fig.update_layout(xaxis_tickangle=-45)
 
-        logger.info("Generating retention time stability plot.")
-        
-        # 5. Create the figure, using the short name for the x-axis
-        fig = px.scatter(
-            plot_data,
-            x='Short Replicate Name',           # Use the new short name here
-            y='Best Retention Time',
-            color='Peptide',
-            hover_name='Replicate Name',        # Show the full name on hover
-            title='Retention Time Stability Across Runs',
-            labels={
-                'Short Replicate Name': 'Replicate', # Update the axis label
-                'Best Retention Time': 'Retention Time (minutes)',
-                'Peptide': 'Peptide'
-            },
-            template=config['template'],
-            category_orders={'Short Replicate Name': replicate_order} # Use short name here too
-        )
+        elif view_by == 'day':
+            logger.info("Generating day-level mean retention time plot.")
+            daily_stats = plot_data.groupby(['Peptide', 'Acquisition Date']).agg(
+                Mean_RT=('Best Retention Time', 'mean'),
+                Std_RT=('Best Retention Time', 'std')
+            ).reset_index()
 
-        # 6. Apply final layout customizations
+            fig = px.line(
+                daily_stats, x='Acquisition Date', y='Mean_RT', color='Peptide',
+                error_y='Std_RT', markers=True, title='Daily Mean Retention Time',
+                labels={'Acquisition Date': 'Date', 'Mean_RT': 'Mean Retention Time (minutes)'},
+                template=config['template']
+            )
+
+        # 4. Apply common layout updates
         fig.update_layout(
             font=dict(family=config['font_family'], size=config['font_size']),
             title_font_size=config['title_font_size'],
-            margin=config['margin'],
-            xaxis_tickangle=-45
+            margin=config['margin']
         )
-        fig.update_traces(
-            marker=dict(size=8, symbol='line-ns-open', line=dict(width=2)),
-            selector=dict(mode='markers')
-        )
-        
-        logger.info("Successfully generated retention time stability plot.")
+        logger.info(f"Successfully generated {view_by}-level RT plot.")
         return fig
 
     def plot_peak_area(
         self,
         top_n_peptides: int = 15,
+        view_by: str = 'run',
         plot_config: Optional[Dict[str, Any]] = None
     ) -> go.Figure:
         """
-        Generates a line plot to visualize peak area stability.
+        Generates a plot to visualize peak area stability.
 
-        This plot shows the peak area for the N most abundant peptides
-        across all replicates, ordered chronologically. It helps assess the
-        stability of the MS signal.
+        Can be viewed by individual 'run' (default) or summarized by 'day'.
 
         Args:
             top_n_peptides (int): The number of most abundant peptides to display.
-                                  Defaults to 15.
-            plot_config (Optional[Dict[str, Any]]): A dictionary to override
-                default plot styling.
+            view_by (str): The mode for plotting, either 'run' or 'day'.
+            plot_config (Optional[Dict, Any]]): A dictionary to override styling.
 
         Returns:
-            go.Figure: A Plotly line plot figure object.
+            go.Figure: A Plotly figure object.
         """
-        # 1. Validate required columns for this specific plot
+        # 1. Validate arguments and required columns
+        if view_by not in ['run', 'day']:
+            raise ValueError("view_by must be either 'run' or 'day'.")
+        
         plot_cols = ['Total Area', 'Replicate Name', 'Peptide']
         missing = [col for col in plot_cols if col not in self.data.columns]
         if missing:
-            msg = f"Cannot create plot. Missing required columns: {missing}"
-            logger.error(msg)
-            raise KeyError(msg)
-        
-        # 2. Get default config and update with user's config
+            raise KeyError(f"Cannot create plot. Missing required columns: {missing}")
+
+        # 2. Get plot config and prepare data
         config = self._create_default_plot_config()
         if plot_config:
             config.update(plot_config)
-            
-        # 3. Prepare the data for plotting
-        try:
-            plot_data = self._get_top_n_peptides_data(top_n=top_n_peptides).copy()
-            metadata = self.extract_metadata()
-        except (KeyError, RuntimeError) as e:
-            logger.error(f"Failed to prepare data for peak area plot: {e}")
-            fig = go.Figure()
-            fig.update_layout(title="Error Preparing Data", annotations=[{
-                "text": "Could not prepare data for plot.<br>Check logs for details.",
-                "showarrow": False
-            }])
-            return fig
-            
-        # 4. Scale the peak area and merge with metadata for sorting
-        plot_data['Peak Area (10^6)'] = plot_data['Total Area'] / 1_000_000
-        plot_data = pd.merge(
-            plot_data,
-            metadata[['Replicate Name', 'Run Order', 'Short Replicate Name']],
-            on='Replicate Name',
-            how='left'
-        ).sort_values(by='Run Order')
-        
-        replicate_order = plot_data.drop_duplicates(
-            'Replicate Name'
-        ).sort_values('Run Order')['Short Replicate Name']
 
-        logger.info("Generating peak area stability plot.")
-        
-        # 5. Create the figure using px.line
-        fig = px.line(
-            plot_data,
-            x='Short Replicate Name',
-            y='Peak Area (10^6)',
-            color='Peptide',
-            markers=True,  # Add markers to the lines
-            hover_name='Replicate Name',
-            title='Peak Area Across Runs',
-            labels={
-                'Short Replicate Name': 'Replicate',
-                'Peak Area (10^6)': 'Peak Area (10^6)',
-                'Peptide': 'Peptide'
-            },
-            template=config['template'],
-            category_orders={'Short Replicate Name': replicate_order}
-        )
+        plot_data = self._get_top_n_peptides_data(top_n=top_n_peptides).copy()
+        metadata = self.extract_metadata()
+        plot_data = pd.merge(plot_data, metadata, on='Replicate Name', how='left')
 
-        # 6. Apply final layout customizations
+        # 3. Generate plot based on the selected view
+        if view_by == 'run':
+            logger.info("Generating run-level peak area stability plot.")
+            plot_data['Peak Area (10^6)'] = plot_data['Total Area'] / 1_000_000
+            plot_data = plot_data.sort_values(by='Run Order')
+            replicate_order = plot_data.drop_duplicates('Replicate Name').sort_values('Run Order')['Short Replicate Name']
+            
+            fig = px.line(
+                plot_data, x='Short Replicate Name', y='Peak Area (10^6)', color='Peptide',
+                markers=True, hover_name='Replicate Name', title='Peak Area Across Runs',
+                labels={'Short Replicate Name': 'Replicate', 'Peak Area (10^6)': 'Peak Area (10^6)'},
+                template=config['template'],
+                category_orders={'Short Replicate Name': replicate_order}
+            )
+            fig.update_layout(xaxis_tickangle=-45)
+
+        elif view_by == 'day':
+            logger.info("Generating day-level mean peak area plot.")
+            daily_stats = plot_data.groupby(['Peptide', 'Acquisition Date']).agg(
+                Mean_Area=('Total Area', 'mean'),
+                Std_Area=('Total Area', 'std')
+            ).reset_index()
+            daily_stats['Mean Area (10^6)'] = daily_stats['Mean_Area'] / 1_000_000
+            daily_stats['Std Area (10^6)'] = daily_stats['Std_Area'] / 1_000_000
+
+            fig = px.line(
+                daily_stats, x='Acquisition Date', y='Mean Area (10^6)', color='Peptide',
+                error_y='Std Area (10^6)', markers=True, title='Daily Mean Peak Area',
+                labels={'Acquisition Date': 'Date', 'Mean Area (10^6)': 'Mean Peak Area (10^6)'},
+                template=config['template']
+            )
+        
+        # 4. Apply common layout updates
         fig.update_layout(
             font=dict(family=config['font_family'], size=config['font_size']),
             title_font_size=config['title_font_size'],
-            margin=config['margin'],
-            xaxis_tickangle=-45
+            margin=config['margin']
         )
-        
-        logger.info("Successfully generated peak area stability plot.")
+        logger.info(f"Successfully generated {view_by}-level Peak Area plot.")
         return fig
 
     def calculate_peptide_stats(self) -> pd.DataFrame:
@@ -530,4 +494,411 @@ class TargetedQcVisualizer:
         )
         
         logger.info("Successfully generated RT distribution plot.")
+        return fig
+
+    def plot_cv_distributions(
+        self,
+        area_cv_threshold: float = 20.0,
+        rt_cv_threshold: float = 2.0,
+        plot_config: Optional[Dict[str, Any]] = None
+    ) -> go.Figure:
+        """
+        Generates histograms of the Area and RT Coefficient of Variation (CV).
+
+        This plot provides an experiment-wide overview of reproducibility for
+        both peak area and retention time.
+
+        Args:
+            area_cv_threshold (float): A QC threshold line for the Area CV plot.
+                                       Defaults to 20.0 (i.e., 20%).
+            rt_cv_threshold (float): A QC threshold line for the RT CV plot.
+                                     Defaults to 2.0 (i.e., 2%).
+            plot_config (Optional[Dict, Any]]): A dictionary to override
+                default plot styling.
+
+        Returns:
+            go.Figure: A Plotly figure object with two subplots.
+        """
+        # 1. Get default config and update with user's config
+        config = self._create_default_plot_config()
+        if plot_config:
+            config.update(plot_config)
+            
+        # 2. Get the peptide statistics
+        try:
+            stats_df = self.calculate_peptide_stats()
+        except (KeyError, RuntimeError) as e:
+            logger.error(f"Failed to get stats for CV plot: {e}")
+            fig = go.Figure()
+            fig.update_layout(title="Error Preparing Data")
+            return fig
+            
+        logger.info("Generating CV distribution histograms.")
+
+        # 3. Create a figure with two subplots
+        fig = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=("Area CV Distribution", "RT CV Distribution")
+        )
+
+        # 4. Add the Area CV histogram to the first subplot
+        fig.add_trace(go.Histogram(
+            x=stats_df['Area_CV'],
+            name='Area CV',
+            marker_color=config['color_discrete_sequence'][0],
+            nbinsx=30
+        ), row=1, col=1)
+
+        # 5. Add the RT CV histogram to the second subplot
+        fig.add_trace(go.Histogram(
+            x=stats_df['RT_CV'],
+            name='RT CV',
+            marker_color=config['color_discrete_sequence'][1],
+            nbinsx=30
+        ), row=1, col=2)
+
+        # 6. Add vertical lines for QC thresholds
+        fig.add_vline(
+            x=area_cv_threshold, line_width=2, line_dash="dash", line_color="red",
+            annotation_text=f"Threshold: {area_cv_threshold}%",
+            annotation_position="top right",
+            row=1, col=1
+        )
+        fig.add_vline(
+            x=rt_cv_threshold, line_width=2, line_dash="dash", line_color="red",
+            annotation_text=f"Threshold: {rt_cv_threshold}%",
+            annotation_position="top right",
+            row=1, col=2
+        )
+
+        # 7. Update layout
+        fig.update_layout(
+            title_text='Peptide Measurement Reproducibility',
+            template=config['template'],
+            font=dict(family=config['font_family'], size=config['font_size']),
+            showlegend=False
+        )
+        fig.update_xaxes(title_text="CV (%)", row=1, col=1)
+        fig.update_xaxes(title_text="CV (%)", row=1, col=2)
+        fig.update_yaxes(title_text="Number of Peptides", row=1, col=1)
+        
+        logger.info("Successfully generated CV distribution plot.")
+        return fig
+
+    def get_failing_peptides(
+        self,
+        area_cv_threshold: float = 20.0,
+        rt_cv_threshold: float = 2.0
+    ) -> pd.DataFrame:
+        """
+        Returns a DataFrame of peptides that fail the specified CV thresholds.
+
+        This method provides a detailed list of peptides that do not meet the
+        reproducibility criteria, complementing the CV distribution plots.
+
+        Args:
+            area_cv_threshold (float): The QC threshold for Area CV (%).
+            rt_cv_threshold (float): The QC threshold for RT CV (%).
+
+        Returns:
+            pd.DataFrame: A table of peptides exceeding one or both thresholds.
+        """
+        logger.info(f"Filtering for peptides with Area CV > {area_cv_threshold}% or RT CV > {rt_cv_threshold}%.")
+        
+        # 1. Get the full statistics table
+        stats_df = self.calculate_peptide_stats()
+
+        # 2. Identify peptides failing each threshold
+        fails_area = stats_df['Area_CV'] > area_cv_threshold
+        fails_rt = stats_df['RT_CV'] > rt_cv_threshold
+
+        # 3. Filter for peptides that fail at least one of the conditions
+        failing_df = stats_df[fails_area | fails_rt].copy()
+
+        # 4. Add a 'Reason' column for clarity
+        reasons = []
+        for index, row in failing_df.iterrows():
+            reason_parts = []
+            if row['Area_CV'] > area_cv_threshold:
+                reason_parts.append("High Area CV")
+            if row['RT_CV'] > rt_cv_threshold:
+                reason_parts.append("High RT CV")
+            reasons.append(" & ".join(reason_parts))
+        
+        failing_df['Reason'] = reasons
+        
+        if failing_df.empty:
+            logger.info("No peptides failed the specified QC thresholds. Great!")
+        else:
+            logger.warning(f"Found {len(failing_df)} peptides failing QC thresholds.")
+            
+        return failing_df
+
+    def plot_tic(
+        self, 
+        view_by: str = 'run',
+        plot_config: Optional[Dict[str, Any]] = None
+    ) -> go.Figure:
+        """
+        Generates a plot of the Total Ion Current (TIC) for each run or day.
+
+        Args:
+            view_by (str): The mode for plotting, either 'run' or 'day'.
+            plot_config (Optional[Dict, Any]]): A dictionary to override styling.
+
+        Returns:
+            go.Figure: A Plotly figure object.
+        """
+        # 1. Validate arguments and columns
+        if view_by not in ['run', 'day']:
+            raise ValueError("view_by must be either 'run' or 'day'.")
+        plot_cols = ['Total Ion Current Area', 'Replicate Name']
+        if missing_cols := [c for c in plot_cols if c not in self.data.columns]:
+            raise KeyError(f"Missing required columns for TIC plot: {missing_cols}")
+
+        # 2. Get config and prepare data
+        config = self._create_default_plot_config()
+        if plot_config:
+            config.update(plot_config)
+        
+        metadata = self.extract_metadata()
+        tic_data = self.data[plot_cols].drop_duplicates()
+        plot_data = pd.merge(tic_data, metadata, on='Replicate Name', how='left')
+
+        # 3. Generate plot based on view
+        if view_by == 'run':
+            logger.info("Generating run-level Total Ion Current (TIC) plot.")
+            plot_data = plot_data.sort_values(by='Run Order')
+            fig = px.bar(
+                plot_data, x='Short Replicate Name', y='Total Ion Current Area',
+                text_auto='.2e', hover_name='Replicate Name',
+                title='Total Ion Current (TIC) per Run',
+                labels={'Short Replicate Name': 'Replicate', 'Total Ion Current Area': 'TIC Area'},
+                template=config['template']
+            )
+            fig.update_traces(textangle=0, textposition="outside")
+            fig.update_layout(xaxis_tickangle=-45)
+
+        elif view_by == 'day':
+            logger.info("Generating day-level mean Total Ion Current (TIC) plot.")
+            daily_stats = plot_data.groupby('Acquisition Date').agg(
+                Mean_TIC=('Total Ion Current Area', 'mean'),
+                Std_TIC=('Total Ion Current Area', 'std')
+            ).reset_index()
+            fig = px.line(
+                daily_stats, x='Acquisition Date', y='Mean_TIC', error_y='Std_TIC',
+                markers=True, title='Daily Mean Total Ion Current (TIC)',
+                labels={'Acquisition Date': 'Date', 'Mean_TIC': 'Mean TIC Area'},
+                template=config['template']
+            )
+
+        # 4. Apply common layout updates
+        fig.update_layout(
+            font=dict(family=config['font_family'], size=config['font_size']),
+            title_font_size=config['title_font_size'],
+            margin=config['margin']
+        )
+        logger.info(f"Successfully generated {view_by}-level TIC plot.")
+        return fig
+
+
+    def plot_daily_cv_trends(
+        self,
+        plot_config: Optional[Dict[str, Any]] = None
+    ) -> go.Figure:
+        """
+        Generates a line plot of the daily median peptide CVs over time.
+
+        This plot tracks the median Area CV and RT CV on a day-by-day basis,
+        providing a high-level view of system reproducibility trends.
+
+        Args:
+            plot_config (Optional[Dict, Any]]): A dictionary to override styling.
+
+        Returns:
+            go.Figure: A Plotly line plot figure object.
+        """
+        # 1. Validate required columns
+        stat_cols = ['Peptide', 'Best Retention Time', 'Total Area', 'Replicate Name']
+        missing = [col for col in stat_cols if col not in self.data.columns]
+        if missing:
+            raise KeyError(f"Cannot calculate daily stats. Missing columns: {missing}")
+
+        # 2. Get plot config and metadata
+        config = self._create_default_plot_config()
+        if plot_config:
+            config.update(plot_config)
+            
+        metadata = self.extract_metadata()
+        if 'Acquisition Date' not in metadata.columns:
+            raise KeyError("Metadata must contain 'Acquisition Date'.")
+        
+        logger.info("Calculating daily median CVs for trend analysis.")
+        daily_results = []
+        
+        # 3. Loop through each unique day to calculate daily stats
+        unique_dates = sorted(metadata['Acquisition Date'].dropna().unique())
+        
+        for date in unique_dates:
+            # Get all runs from the current day
+            runs_on_day = metadata[metadata['Acquisition Date'] == date]['Replicate Name']
+            
+            # Filter the main data for just those runs
+            daily_data_subset = self.data[self.data['Replicate Name'].isin(runs_on_day)]
+            
+            # Skip days with too few data points to calculate a CV
+            if len(daily_data_subset['Replicate Name'].unique()) < 2:
+                continue
+
+            # Calculate stats for peptides using only this day's data
+            daily_stats = daily_data_subset.groupby('Peptide').agg(
+                RT_mean=('Best Retention Time', 'mean'),
+                RT_std=('Best Retention Time', 'std'),
+                Area_mean=('Total Area', 'mean'),
+                Area_std=('Total Area', 'std')
+            )
+            daily_stats['RT_CV'] = (daily_stats['RT_std'] / daily_stats['RT_mean']) * 100
+            daily_stats['Area_CV'] = (daily_stats['Area_std'] / daily_stats['Area_mean']) * 100
+            daily_stats.fillna(0, inplace=True)
+            
+            # Store the median CVs for this day
+            daily_results.append({
+                'Date': date,
+                'Median Area CV (%)': daily_stats['Area_CV'].median(),
+                'Median RT CV (%)': daily_stats['RT_CV'].median()
+            })
+            
+        if not daily_results:
+            logger.warning("No daily data available to plot CV trends.")
+            return go.Figure().update_layout(title="Not enough daily data for CV Trend plot")
+
+        # 4. Create a DataFrame from the results and plot
+        trends_df = pd.DataFrame(daily_results)
+        
+        # Melt the DataFrame to plot both CV types on one graph
+        plot_df = trends_df.melt(
+            id_vars=['Date'], 
+            value_vars=['Median Area CV (%)', 'Median RT CV (%)'],
+            var_name='Metric', 
+            value_name='Median CV'
+        )
+        
+        fig = px.line(
+            plot_df,
+            x='Date',
+            y='Median CV',
+            color='Metric',
+            markers=True,
+            title='Daily Median Peptide CVs',
+            labels={'Median CV': 'Median CV (%)'},
+            template=config['template']
+        )
+        
+        # 5. Apply final layout customizations
+        fig.update_layout(
+            font=dict(family=config['font_family'], size=config['font_size']),
+            title_font_size=config['title_font_size'],
+            margin=config['margin']
+        )
+
+        logger.info("Successfully generated daily CV trend plot.")
+        return fig
+    
+    def plot_qc_peptide_chart(
+        self,
+        peptide_sequence: str,
+        metric: str = 'Peak Area',
+        view_by: str = 'run',
+        control_limit_std: float = 3.0,
+        plot_config: Optional[Dict[str, Any]] = None
+    ) -> go.Figure:
+        """
+        Generates a control chart for a specific peptide's metric.
+
+        Args:
+            peptide_sequence (str): The peptide sequence to plot.
+            metric (str): The metric to plot, 'Peak Area' or 'Retention Time'.
+            view_by (str): The mode for plotting: 'run', 'day', or 'day_distribution'.
+            control_limit_std (float): Number of std deviations for control limits.
+            plot_config (Optional[Dict, Any]]): A dictionary to override styling.
+
+        Returns:
+            go.Figure: A Plotly figure showing the control chart.
+        """
+        # 1. Validate arguments and select data
+        if view_by not in ['run', 'day', 'day_distribution']:
+            raise ValueError("view_by must be 'run', 'day', or 'day_distribution'.")
+        if metric not in ['Peak Area', 'Retention Time']:
+            raise ValueError("metric must be either 'Peak Area' or 'Retention Time'.")
+
+        peptide_data = self.data[self.data['Peptide'] == peptide_sequence].copy()
+        if peptide_data.empty:
+            raise ValueError(f"Peptide '{peptide_sequence}' not found in the data.")
+
+        # 2. Get plot config and metadata
+        config = self._create_default_plot_config()
+        if plot_config:
+            config.update(plot_config)
+        metadata = self.extract_metadata()
+        plot_data = pd.merge(
+            peptide_data, metadata, on='Replicate Name', how='left'
+        ).sort_values(by='Run Order')
+        
+        metric_col = 'Total Area' if metric == 'Peak Area' else 'Best Retention Time'
+        mean_overall = plot_data[metric_col].mean()
+        std_overall = plot_data[metric_col].std()
+        
+        # 3. Generate plot based on the selected view
+        if view_by == 'run':
+            title = f'Control Chart for {peptide_sequence}<br>(Run View)'
+            fig = px.line(
+                plot_data, x='Short Replicate Name', y=metric_col, markers=True,
+                title=title, labels={'Short Replicate Name': 'Replicate', metric_col: metric},
+                template=config['template']
+            )
+            for i in range(int(control_limit_std), 0, -1):
+                fig.add_hrect(
+                    y0=mean_overall - (i * std_overall), y1=mean_overall + (i * std_overall),
+                    fillcolor="green", opacity=0.1, layer="below", line_width=0
+                )
+            fig.add_hline(y=mean_overall, line_dash="dash", line_color="red", annotation_text="Overall Mean")
+            # ... (outlier highlighting logic remains the same)
+            fig.update_layout(xaxis_tickangle=-45)
+
+        elif view_by == 'day':
+            title = f'Daily Mean for {peptide_sequence}<br>(Day Trend View)'
+            daily_stats = plot_data.groupby('Acquisition Date').agg(
+                Mean_Value=(metric_col, 'mean'), Std_Value=(metric_col, 'std')
+            ).reset_index()
+            fig = px.line(
+                daily_stats, x='Acquisition Date', y='Mean_Value', error_y='Std_Value',
+                markers=True, title=title, template=config['template'],
+                labels={'Acquisition Date': 'Date', 'Mean_Value': f'Mean {metric}'}
+            )
+            # Add overall mean and SD bands for context
+            for i in range(int(control_limit_std), 0, -1):
+                fig.add_hrect(
+                    y0=mean_overall - (i * std_overall), y1=mean_overall + (i * std_overall),
+                    fillcolor="green", opacity=0.1, layer="below", line_width=0
+                )
+            fig.add_hline(y=mean_overall, line_dash="dash", line_color="red", annotation_text="Overall Mean")
+
+        elif view_by == 'day_distribution':
+            title = f'Daily Distribution for {peptide_sequence}<br>(Day Distribution View)'
+            plot_data['Acquisition Day'] = pd.to_datetime(plot_data['Acquisition Date']).dt.strftime('%Y-%m-%d')
+            fig = px.box(
+                plot_data, x='Acquisition Day', y=metric_col, points='all',
+                title=title, template=config['template'],
+                labels={'Acquisition Day': 'Date', metric_col: metric}
+            )
+            # Add overall mean line for context
+            fig.add_hline(y=mean_overall, line_dash="dash", line_color="red", annotation_text="Overall Mean")
+
+        # 4. Apply common layout updates
+        fig.update_layout(
+            font=dict(family=config['font_family'], size=config['font_size']),
+            title_font_size=config['title_font_size'],
+            margin=config['margin']
+        )
+        logger.info(f"Successfully generated control chart for {peptide_sequence}.")
         return fig

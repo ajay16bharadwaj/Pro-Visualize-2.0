@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Read(//y/ByPerson/Ajay/Pro-Vizualize-2.0-Demo/Proviz_singleCell/**)",
+      "Read(//y/ByPerson/Ajay/for_sarah/helen_goodridge_singleCell/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
