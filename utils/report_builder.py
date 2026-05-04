@@ -126,7 +126,7 @@ class ReportBuilder:
             return
 
         st.caption(f"{len(self.items)} item(s) queued · edits to notes are captured at download time")
-        self._render_download_row()
+        self._render_download_row("top")
         st.divider()
 
         _KIND_ICON = {
@@ -157,9 +157,9 @@ class ReportBuilder:
                 st.divider()
 
         st.divider()
-        self._render_download_row()
+        self._render_download_row("bottom")
 
-    def _render_download_row(self) -> None:
+    def _render_download_row(self, position: str = "bottom") -> None:
         c1, c2 = st.columns(2)
         try:
             html_bytes = self.export_html()
@@ -170,6 +170,7 @@ class ReportBuilder:
                 mime="text/html",
                 use_container_width=True,
                 type="primary",
+                key=f"rpt_dl_html_{position}",
             )
         except Exception as e:
             logger.error(f"HTML export failed: {e}", exc_info=True)
@@ -183,6 +184,7 @@ class ReportBuilder:
                 file_name="pro_visualize_report.zip",
                 mime="application/zip",
                 use_container_width=True,
+                key=f"rpt_dl_zip_{position}",
             )
         except Exception as e:
             logger.error(f"ZIP export failed: {e}", exc_info=True)
