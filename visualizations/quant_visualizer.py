@@ -330,7 +330,7 @@ class QuantificationVisualizer:
             var_name='Sample', value_name='Intensity'
         ).dropna(subset=['Intensity'])
 
-        merged_data = merged_data.merge(self.annotation_df, left_on='Sample', right_on=self.sample_col)
+        merged_data = melted_data.merge(self.annotation_df, left_on='Sample', right_on=self.sample_col)
         merged_data = merged_data[merged_data['Intensity'] > 0].copy()
         merged_data['log10(Intensity)'] = np.log10(merged_data['Intensity'])
 

@@ -8,39 +8,34 @@
 
 ## 🟡 Current Working State (last updated 2026-05-04 by Sonnet 4.6)
 
-**Active branch:** `feature/p1-report-builder` (pushed to `origin`). P1 smoke-tested and passing — needs PR → develop, squash merge, tag, then cut `feature/p2-comparative`.
+**Active branch:** `feature/p2-comparative` (in progress). P0 ☑ and P1 ☑ merged to develop (PR #2). P2 implementation complete — needs smoke test, then PR → develop, squash merge, tag `v2.0.0-p2`.
 
 ### Phase completion summary
 
 | Phase | Status | Merge commit / tag | Branch |
 |-------|--------|-------------------|--------|
 | P0 — Foundation | ☑ Done | PR #1 merged → develop; `v2.0.0-p0` tagged | `feature/p0-foundation` |
-| P1 — Report Builder | ☑ Smoke-tested | Pending PR → develop + `v2.0.0-p1` tag | `feature/p1-report-builder` |
-| P2 — Comparative | ☐ Next | — | cut from develop after P1 merges |
+| P1 — Report Builder | ☑ Done | PR #2 merged → develop; `v2.0.0-p1` tagged | `feature/p1-report-builder` |
+| P2 — Comparative | ⏳ Smoke test pending | — | `feature/p2-comparative` |
 
-### P1 commits on `feature/p1-report-builder`
+### What's done in P2 (Comparative module upgrade)
 
-```
-e7c55a6 fix(p1): add unique keys to duplicate download buttons in render_preview
-2317196 feat(p1): wire _queue_for_report to ReportBuilder, add Report tab to app.py
-d2cde3d feat(p1): add ReportBuilder with HTML + ZIP export and Jinja2 template
-```
+- ✅ **`@handle_plotting_errors`** added to all 5 plot methods in `comparative_visualizer.py`: `plot_volcano`, `plot_comparative_heatmap`, `plot_expression_violin`, `plot_enrichment_manhattan`, `plot_enrichment_dotplot`.
+- ✅ **`safe_render` isolation** — all 6 inner tabs (overview/select/volcano/heat/expr/path) wrapped in `try/except` with scoped error cards; failure in one tab cannot crash the others.
+- ✅ **Heatmap migrated to `MplPlotManager`** — replaces raw `st.image()`. Heatmap now has title/figsize/dpi editing, PNG download, and "Add to Report". `plot_comparative_heatmap` accepts `title`/`figsize`/`dpi` kwargs so edits actually re-render.
+- ✅ **Enrichment threshold presets** — "Most stringent" (FDR<0.01, |FC|>1.5), "Standard" (0.05/1.0), "Exploratory" (0.10/0.5) surfaced in Selection tab via selectbox + Apply button. Uses `SIGNIFICANCE_PRESETS` from `config/plot_configs.py`.
+- ✅ **Enrichr retry + timeout** — `HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5, status_forcelist=[429,500,502,503,504]))` + `timeout=30` on both POST and GET. Actionable error message on failure: "Enrichr API may be down — try again or use the offline gene-list export."
+- ✅ **`HUMAN_TRANSCRIPTION_FACTORS` moved to config** — removed class attribute from `comparative_visualizer.py`; now imported from `config/plot_configs.py` (single source of truth).
+- ✅ **"Add to Report" wired** — `.module = "comparative"` set on all 5 PlotManager/MplPlotManager instances (volcano, violin, manhattan, dotplot ×N, heatmap). Figures now appear under "comparative" in the Report tab, not "unknown".
 
-### What's done in P1 (Report Builder)
-
-- ✅ **`utils/report_builder.py`** — `ReportBuilder` class: `add_figure / add_table / add_section / remove(module, key) / reorder(module, keys) / render_preview / export_html / export_zip`. Upserts by key preserving order. Notes read from Streamlit session_state widget keys at export time (no save button needed).
-- ✅ **`templates/report.html.j2`** — Jinja2 template. Plotly CDN loaded once in `<head>`; each figure uses `include_plotlyjs=False` (no per-figure CDN reload). Matplotlib figures embed as inline base64 PNG. Per-item collapsible parameters table + notes block. Minimal inline CSS, no external deps.
-- ✅ **`utils/plot_manager.py`** — `_queue_for_report` stub replaced with real `ReportBuilder.add_figure()` call via `st.session_state['report']`. Signature unchanged.
-- ✅ **`app.py`** — `ReportBuilder` initialized in session state before tabs; `"📋 Report"` tab added between SCP and Chat; wrapped in `safe_render(reset_keys=['report'])`.
-- ✅ **Smoke test passed** — empty-state message correct; 2 SCP figures added; both appear in Report tab; HTML download opens with interactive figures; ZIP contains PNG+SVG+HTML per figure + `parameters.json` + `notes.md` + `manifest.json`. Bug fixed: duplicate widget keys in `_render_download_row` (top/bottom position suffix).
-
-### Pending to close out P1
+### Pending to close out P2
 
 | # | Task |
 |---|------|
-| 1 | Open PR `feature/p1-report-builder → develop` |
-| 2 | Merge (squash) → `develop`, tag `v2.0.0-p1` |
-| 3 | Cut `feature/p2-comparative` from `develop` |
+| 1 | Run smoke test (see §Verification) |
+| 2 | Open PR `feature/p2-comparative → develop` |
+| 3 | Merge (squash) → `develop`, tag `v2.0.0-p2` |
+| 4 | Cut `feature/p3-quant` from `develop` |
 
 ### Environment notes (critical for resumption)
 

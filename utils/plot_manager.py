@@ -411,7 +411,7 @@ class MplPlotManager:
                 kind="matplotlib_png",
             )
 
-        st.image(buf, use_container_width=True)
+        st.image(buf, use_column_width=True)
 
 
 # ---------------------------------------------------------------------------

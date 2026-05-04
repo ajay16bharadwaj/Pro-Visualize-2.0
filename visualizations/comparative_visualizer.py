@@ -11,6 +11,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 import requests
 import time
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from config.plot_configs import HUMAN_TRANSCRIPTION_FACTORS
+from utils.helpers import handle_plotting_errors
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +22,6 @@ class ComparativeVisualizer:
     """
     Handles data loading, validation, and visualization for comparative analysis.
     """
-
-    HUMAN_TRANSCRIPTION_FACTORS = set([
-        'ATF1', 'ATF2', 'ATF3', 'ATF4', 'ATF5', 'ATF6', 'ATF7', 'CREB1', 'CREB3',
-        'CREB5', 'FOS', 'FOSB', 'JUN', 'JUNB', 'JUND', 'MYC', 'MYCN', 'MAX', 'MAD',
-        'CEBPA', 'CEBPB', 'CEBPD', 'EGR1', 'EGR2', 'EGR3', 'EGR4', 'SP1', 'SP2',
-        'SP3', 'SP4', 'KLF1', 'KLF2', 'KLF4', 'KLF5', 'STAT1', 'STAT2', 'STAT3',
-        'STAT4', 'STAT5A', 'STAT5B', 'STAT6', 'NFKB1', 'NFKB2', 'RELA', 'RELB',
-        'TP53', 'TP63', 'TP73', 'SOX2', 'SOX9', 'POU5F1', 'NANOG', 'GATA1', 'GATA2',
-        'GATA3', 'GATA4', 'GATA6', 'RUNX1', 'RUNX2', 'RUNX3', 'TCF3', 'TCF4', 'LEF1'
-    ])
 
     def __init__(self, protein_df: pd.DataFrame, annotation_df: pd.DataFrame, 
                  comparative_df: pd.DataFrame, column_config: dict):
@@ -97,7 +91,7 @@ class ComparativeVisualizer:
         if 'Gene Name' not in merged_df.columns:
             return 0
             
-        tf_found = merged_df['Gene Name'].isin(self.HUMAN_TRANSCRIPTION_FACTORS)
+        tf_found = merged_df['Gene Name'].isin(HUMAN_TRANSCRIPTION_FACTORS)
         return tf_found.sum()
     
     def get_comparison_groups(self) -> list:
@@ -125,6 +119,7 @@ class ComparativeVisualizer:
         
         return significant_df
 
+    @handle_plotting_errors
     def plot_volcano(self, fdr_cutoff: float, fc_cutoff: float,
                      proteins_to_annotate=None, color_by_option='None',
                      custom_list=None, keyword=None, annotate_top_10=False,
@@ -168,7 +163,7 @@ class ComparativeVisualizer:
             mask = plot_df[comp_protein_col].isin(custom_list) | plot_df['Gene Name'].isin(custom_list)
             plot_df.loc[mask, 'Color'] = 'In Custom List'; color_map['In Custom List'] = '#009E73'
         elif color_by_option == 'Transcription Factors':
-            mask = plot_df['Gene Name'].isin(self.HUMAN_TRANSCRIPTION_FACTORS)
+            mask = plot_df['Gene Name'].isin(HUMAN_TRANSCRIPTION_FACTORS)
             plot_df.loc[mask, 'Color'] = 'Transcription Factor'; color_map['Transcription Factor'] = '#CC79A7'
         elif color_by_option == 'Keyword Search' and keyword:
             mask = plot_df['Protein Description'].str.contains(keyword, case=False, na=False)
@@ -214,9 +209,11 @@ class ComparativeVisualizer:
         fig.update_layout(height=700)
         return fig
 
-    def plot_comparative_heatmap(self, protein_list: list):
+    @handle_plotting_errors
+    def plot_comparative_heatmap(self, protein_list: list, title: str = None, figsize: tuple = None, dpi: int = 150, **_kwargs):
         """
         Generates a clustered heatmap using Seaborn (Static).
+        Accepts title/figsize/dpi kwargs so MplPlotManager's edit panel can re-render with user changes.
         """
         logger.info(f"Generating Seaborn heatmap for {len(protein_list)} proteins.")
         
@@ -249,26 +246,28 @@ class ComparativeVisualizer:
 
         show_yticklabels = len(scaled_df) <= 50 
         
+        _figsize = figsize or (12, max(10, len(scaled_df) * 0.08))
         g = sns.clustermap(
             scaled_df,
-            method='ward',       
-            cmap='RdBu_r',       
-            col_colors=col_colors.to_frame(), 
+            method='ward',
+            cmap='RdBu_r',
+            col_colors=col_colors.to_frame(),
             yticklabels=show_yticklabels,
-            figsize=(12, max(10, len(scaled_df) * 0.08))
+            figsize=_figsize,
         )
-        
+
         handles = [plt.Rectangle((0,0),1,1, color=color_map[group]) for group in unique_groups]
-        plt.legend(handles, unique_groups, title='Group', bbox_to_anchor=(1, 1), 
+        plt.legend(handles, unique_groups, title='Group', bbox_to_anchor=(1, 1),
                    bbox_transform=plt.gcf().transFigure, frameon=False)
-        g.fig.suptitle("Heatmap of Protein Abundance (Z-Score)", y=1.02)
-        
+        g.fig.suptitle(title or "Heatmap of Protein Abundance (Z-Score)", y=1.02)
+
         buf = BytesIO()
-        plt.savefig(buf, format="png", bbox_inches='tight')
+        plt.savefig(buf, format="png", dpi=dpi, bbox_inches='tight')
         buf.seek(0)
         plt.close(g.fig)
         return buf
 
+    @handle_plotting_errors
     def plot_expression_violin(self, protein_list: list, **kwargs):
         """
         Generates clean, faceted violin plots for a given list of proteins.
@@ -377,20 +376,28 @@ class ComparativeVisualizer:
         ENRICHR_URL = 'https://maayanlab.cloud/Enrichr'
         genes_str = '\n'.join(gene_list)
         payload = {'list': (None, genes_str), 'description': (None, 'Pro-Visualize Analysis')}
-        
+
+        _retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
+        _session = requests.Session()
+        _session.mount("https://", HTTPAdapter(max_retries=_retry))
+        _session.mount("http://", HTTPAdapter(max_retries=_retry))
+
         try:
-            response = requests.post(f'{ENRICHR_URL}/addList', files=payload)
+            response = _session.post(f'{ENRICHR_URL}/addList', files=payload, timeout=30)
             response.raise_for_status()
             user_list_id = response.json()['userListId']
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to submit gene list to Enrichr: {e}")
+            raise RuntimeError(
+                "Enrichr API may be down — try again or use the offline gene-list export. "
+                f"(Network error: {e})"
+            )
 
         all_results = []
         for library in organism_libraries[organism.lower()]:
-            time.sleep(0.5) 
+            time.sleep(0.5)
             try:
                 query_url = f'{ENRICHR_URL}/enrich?userListId={user_list_id}&backgroundType={library}'
-                response = requests.get(query_url)
+                response = _session.get(query_url, timeout=30)
                 response.raise_for_status()
                 data = response.json().get(library, [])
                 
@@ -413,6 +420,7 @@ class ComparativeVisualizer:
         results_df['-log10(p)'] = -np.log10(results_df['p_value'])
         return results_df
 
+    @handle_plotting_errors
     def plot_enrichment_manhattan(self, enrichment_df: pd.DataFrame, **kwargs):
         """
         Creates an enhanced Manhattan-like plot with colored blocks for each source.
@@ -457,6 +465,7 @@ class ComparativeVisualizer:
         fig.update_layout(height=600)
         return fig
 
+    @handle_plotting_errors
     def plot_enrichment_dotplot(self, enrichment_df: pd.DataFrame, terms_to_plot: list = None, **kwargs):
         """
         Generates a dot plot for enriched terms.
