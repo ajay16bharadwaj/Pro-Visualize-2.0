@@ -127,36 +127,46 @@ DEVIATION_BUCKETS: dict[str, float] = {
 
 COLUMN_FALLBACKS: dict[str, list[str]] = {
     "protein_id": [
-        "Protein", "ProteinIds", "Protein.Ids", "Protein IDs",
-        "Accession", "Majority protein IDs",
+        # Order matters — first match wins. Listed roughly by frequency
+        # observed in the demo data sets (Pro-Vizualize-2.0-Demo).
+        "Protein", "ProteinIds", "Protein.Group", "Protein.Ids",
+        "Protein Group", "Protein IDs", "Accession", "Majority protein IDs",
     ],
     "gene": [
-        "Gene Name", "Gene", "Genes", "Gene names",
+        "Gene Name", "Genes", "Gene", "Gene names",
         "Gene Symbol", "Gene.Symbol",
     ],
     "sample": [
-        "Sample", "Run", "Replicate", "Replicate Name",
-        "Level3", "File.Name", "Raw file",
+        # SCP demo uses "Run"; Quant/Comp uses "Level3"; Targeted-QC uses
+        # "Replicate Name"; DIA-NN long-format reports use "Run" (long) /
+        # "File.Name" (stats). Filename comes last as it's path-prefixed.
+        "Run", "Level3", "Replicate Name", "Sample",
+        "File.Name", "Filename", "Raw file",
     ],
     "group": [
-        "Group", "Condition", "Experimental Group",
-        "attribute_ExperimentalGroup", "Treatment",
+        # SCP demo: lowercase "condition". Quant demo:
+        # "attribute_ExperimentalGroup". Generic: "Group" / "Condition".
+        "condition", "attribute_ExperimentalGroup", "Group",
+        "Condition", "Experimental Group", "biological_group",
+        "Treatment",
     ],
     "concentration": [
-        "Concentration", "Conc", "Conc.", "Amount", "Dose",
-        "Level", "Dilution", "ng/uL",
+        "Concentration", "concentration", "Conc", "Conc.",
+        "Amount", "Dose", "Level", "Dilution", "ng/uL",
     ],
     "replicate": [
-        "Replicate", "Rep", "Replicate Number", "Bio Rep", "Bio Replicate",
+        "Replicate", "replicate", "Rep", "Replicate Number",
+        "Bio Rep", "Bio Replicate",
     ],
     "fold_change": [
-        "log2FC", "Log2FC", "Log2FoldChange", "logFC", "log2(FC)",
+        "log2FC", "Log2FC", "Log2FoldChange", "logFC", "log2(FC)", "FC",
     ],
     "fdr": [
-        "Imputed.FDR", "FDR", "adj.P.Val", "padj", "q.value", "qvalue", "Q.Value",
+        "Imputed.FDR", "FDR", "adj.P.Val", "padj",
+        "q.value", "qvalue", "Q.Value",
     ],
     "pvalue": [
-        "p.value", "pvalue", "P.Value", "PValue", "p_val",
+        "p.value", "pvalue", "P.Value", "PValue", "p_val", "log10(p)",
     ],
 }
 
