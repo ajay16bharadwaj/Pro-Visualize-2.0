@@ -212,3 +212,6 @@ __marimo__/
 dataset_indexes/
 literature_index/
 
+# Sample data for single-cell module
+sample_single_cell/
+
