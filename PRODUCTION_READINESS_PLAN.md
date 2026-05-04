@@ -6,58 +6,59 @@
 
 ---
 
-## 🟡 Current Working State (last updated 2026-05-03 by Opus 4.7)
+## 🟡 Current Working State (last updated 2026-05-04 by Sonnet 4.6)
 
-**Active branch:** `feature/p0-foundation` (pushed to `origin`).
+**Active branch:** `feature/p1-report-builder` (pushed to `origin`). P1 smoke-tested and passing — needs PR → develop, squash merge, tag, then cut `feature/p2-comparative`.
 
-### Commits made on this branch so far
+### Phase completion summary
+
+| Phase | Status | Merge commit / tag | Branch |
+|-------|--------|-------------------|--------|
+| P0 — Foundation | ☑ Done | PR #1 merged → develop; `v2.0.0-p0` tagged | `feature/p0-foundation` |
+| P1 — Report Builder | ☑ Smoke-tested | Pending PR → develop + `v2.0.0-p1` tag | `feature/p1-report-builder` |
+| P2 — Comparative | ☐ Next | — | cut from develop after P1 merges |
+
+### P1 commits on `feature/p1-report-builder`
 
 ```
-bd6a21e chore(p0): align COLUMN_FALLBACKS with demo data column names
-efc55cc feat(p0): extend PlotManager with persistent edits, exports, MplPlotManager
-8278e47 feat(p0): add safe_render() tab isolation primitive and to_hex()
-e4a1f04 feat(p0): add utils/sanity.py validation helpers
-621d3f9 feat(p0): pin kaleido/jinja2 and populate central plot config
-33992d1 docs: add production readiness plan
+e7c55a6 fix(p1): add unique keys to duplicate download buttons in render_preview
+2317196 feat(p1): wire _queue_for_report to ReportBuilder, add Report tab to app.py
+d2cde3d feat(p1): add ReportBuilder with HTML + ZIP export and Jinja2 template
 ```
 
-(Step 0 commits already on `develop`: `f26d708` SCP enrichment filters; `0d27126` merge.)
+### What's done in P1 (Report Builder)
 
-### What's done in P0 (Foundation layer)
+- ✅ **`utils/report_builder.py`** — `ReportBuilder` class: `add_figure / add_table / add_section / remove(module, key) / reorder(module, keys) / render_preview / export_html / export_zip`. Upserts by key preserving order. Notes read from Streamlit session_state widget keys at export time (no save button needed).
+- ✅ **`templates/report.html.j2`** — Jinja2 template. Plotly CDN loaded once in `<head>`; each figure uses `include_plotlyjs=False` (no per-figure CDN reload). Matplotlib figures embed as inline base64 PNG. Per-item collapsible parameters table + notes block. Minimal inline CSS, no external deps.
+- ✅ **`utils/plot_manager.py`** — `_queue_for_report` stub replaced with real `ReportBuilder.add_figure()` call via `st.session_state['report']`. Signature unchanged.
+- ✅ **`app.py`** — `ReportBuilder` initialized in session state before tabs; `"📋 Report"` tab added between SCP and Chat; wrapped in `safe_render(reset_keys=['report'])`.
+- ✅ **Smoke test passed** — empty-state message correct; 2 SCP figures added; both appear in Report tab; HTML download opens with interactive figures; ZIP contains PNG+SVG+HTML per figure + `parameters.json` + `notes.md` + `manifest.json`. Bug fixed: duplicate widget keys in `_render_download_row` (top/bottom position suffix).
 
-- ✅ **`requirements.txt`** — `kaleido==0.2.1` and `jinja2>=3.1.0` pinned. (Not yet installed in `.venv` — see Pending below.)
-- ✅ **`config/plot_configs.py`** — populated with `THEMES`, `OKABE_ITO_PALETTE`/`COLORBLIND_PALETTE`, `HUMAN_TRANSCRIPTION_FACTORS` (63 symbols, frozenset, single source replacing the duplicates in `quant_visualizer.py:29-37` and `comparative_visualizer.py:22-30`), `SIGNIFICANCE_DEFAULTS`/`SIGNIFICANCE_PRESETS`, `QC_THRESHOLDS`, `DEVIATION_BUCKETS`, `COLUMN_FALLBACKS` (aligned with real demo data — Quant uses `Level3`, SCP uses lowercase `condition`/`concentration`/`replicate`, etc.), `DIA_RUN_NAME_PATTERNS`, `EXPORT_DEFAULTS`.
-- ✅ **`utils/sanity.py`** — new module. `ValidationResult` dataclass, `validate_columns`, `detect_column`, `check_sample_alignment`, `check_value_ranges`, `summarize_missingness`, `gene_resolution_report`, `render_validation` (lazy Streamlit import for unit-testability). Verified with 7 unit tests.
-- ✅ **`utils/helpers.py`** — extended. `safe_render(label, fn, *args, reset_keys=None, **kwargs)` is the new tab-isolation primitive. `to_hex(color)` replaces fragile inline RGB parsers. `handle_plotting_errors` decorator preserved unchanged. Verified with 9 to_hex round-trips and 2 invalid-input cases.
-- ✅ **`utils/plot_manager.py`** — extended from 108 lines to ~470. Edits now persist across regeneration (params-hash invalidation). New editor controls: font size, legend position, gridlines (in addition to title/height/marker size/axis labels). Static exports added: PNG/SVG/HTML download buttons (PNG/SVG via `kaleido` — gracefully disabled with tooltip if missing; HTML via `fig.to_html(include_plotlyjs="cdn")`). New `MplPlotManager` class for matplotlib `BytesIO` figures. "Add to Report" stub queues into `st.session_state.report_queue` (real builder lands in P1).
+### Pending to close out P1
 
-### What's pending to close out P0 (per the P0 → P1 handover criteria)
-
-| # | Task | Notes |
-|---|------|-------|
-| 1 | `pip install kaleido==0.2.1` in `.venv` | Required for PNG/SVG buttons to actually produce bytes. Without it, buttons render but are disabled. |
-| 2 | Wire `safe_render` into `app.py` for top-level tab bodies | Per Section 2.2: `with tab_quant: safe_render("Quantification", render_quant_module)`. Each module needs `reset_keys` listing its session_state keys. |
-| 3 | P0 smoke test (manual) | (a) Launch app, open SCP module, generate a plot, click each of PNG/SVG/HTML — files open and render. (b) Inject a deliberate exception inside one tab body, confirm error card appears, other tabs still load. |
-| 4 | Push remaining commits | After Step 1-3, `git push origin feature/p0-foundation` — last push was at commit `33992d1`. |
-| 5 | Open PR `feature/p0-foundation → develop` | Title: "P0: Foundation utilities (PlotManager / safe_render / sanity / config)". Body should list smoke-test results. |
-| 6 | Merge PR (squash) → `develop`, tag `v2.0.0-p0` | After merge, mark P0 ☑ Done in the phasing table below. |
-| 7 | Update this section with merge commit + cut `feature/p1-report-builder` | Keep this Current Working State section in sync as work lands. |
+| # | Task |
+|---|------|
+| 1 | Open PR `feature/p1-report-builder → develop` |
+| 2 | Merge (squash) → `develop`, tag `v2.0.0-p1` |
+| 3 | Cut `feature/p2-comparative` from `develop` |
 
 ### Environment notes (critical for resumption)
 
-- **Python venv** is at `.venv/` in repo root: `source .venv/bin/activate`. Streamlit 1.36.0 + pandas 2.2.2 are installed.
-- **`python` is NOT on PATH unactivated** — system has only `python3` (3.9.6, too old). Always activate the venv first.
-- **Demo data** lives on a mounted volume at `/Volumes/VanEykJLab-Files/ByPerson/Ajay/Pro-Vizualize-2.0-Demo/` — see the `reference_demo_data.md` memory for per-folder layout. Used for smoke tests; the user said do not over-engineer QC validation around it.
-- **`.claude/settings.local.json`** has unrelated harness config drift in working tree — leave it; do not stage.
+- **Python venv** at `.venv/`: `source .venv/bin/activate`. `kaleido==0.2.1` installed.
+- **`python` not on PATH unactivated** — system python3 is 3.9.6. Always activate venv first.
+- **Demo data** at `/Volumes/VanEykJLab-Files/ByPerson/Ajay/Pro-Vizualize-2.0-Demo/` — see `reference_demo_data.md` memory.
+- **`.claude/settings.local.json`** has harness config drift in working tree — leave it; do not stage.
 
-### What P1 looks like (next phase, for the picking-up instance)
+### What P2 looks like (next phase)
 
-Cut `feature/p1-report-builder` from `develop` after P0 merges. P1 deliverables:
-- New `utils/report_builder.py` with `ReportBuilder` class (see Section 2.1 — `add_figure / add_table / add_section / remove / reorder / export_html / export_zip`).
-- New `templates/report.html.j2` (Jinja2, embeds Plotly figures via `fig.to_html(full_html=False, include_plotlyjs='cdn')`, matplotlib figures inline base64-PNG).
-- New top-level "Report" tab in `app.py` with download buttons for HTML and ZIP.
-- Wire `_queue_for_report` (currently a stub at `utils/plot_manager.py:_queue_for_report`) to the real builder.
-- P1 smoke test: SCP → add 2 figures → Report tab → download both formats → both open and contain the figures.
+Cut `feature/p2-comparative` from `develop`. P2 deliverables (Section 3.4):
+- Add `@handle_plotting_errors` + `safe_render` to all Comparative tabs (currently no error handling at all).
+- Migrate heatmap to `MplPlotManager`.
+- Surface enrichment presets: "Most stringent" (FDR<0.01, |log2FC|>1.5), "Standard" (0.05/1.0), "Exploratory" (0.1/0.5).
+- Wrap Enrichr/g:Profiler calls in `HTTPAdapter(max_retries=3)` + 30s timeout; actionable error on failure.
+- Move `HUMAN_TRANSCRIPTION_FACTORS` import to `config/plot_configs.py` (remove duplicate in `comparative_visualizer.py:22-30`).
+- Hook "Add to Report" into `ReportBuilder` for all Comparative plots.
+- Critical files: `modules/comparative_module.py`, `visualizations/comparative_visualizer.py`.
 
 ---
 
@@ -409,8 +410,8 @@ The plan is sized so each phase ships value independently — you can stop after
 
 | Phase | Status | Scope | Effort | Ship Value |
 |-------|--------|-------|--------|-----------|
-| **P0** | ⏳ In progress | Foundation: extend `PlotManager`, `safe_render`, config, sanity, kaleido | 1-2 days | Tab isolation + static exports work everywhere |
-| **P1** | ☐ Pending | Report Builder (HTML + ZIP bundle) + template + Report tab | 1-2 days | Scientists leave with interactive HTML or raw asset ZIP |
+| **P0** | ☑ Done (`v2.0.0-p0`) | Foundation: extend `PlotManager`, `safe_render`, config, sanity, kaleido | 1-2 days | Tab isolation + static exports work everywhere |
+| **P1** | ☑ Done (pending merge) | Report Builder (HTML + ZIP bundle) + template + Report tab | 1-2 days | Scientists leave with interactive HTML or raw asset ZIP |
 | **P2** | ☐ Pending | Comparative module upgrade (most user-facing, most fragile) | 1 day | Critical path stabilized |
 | **P3** | ☐ Pending | Quantification module upgrade + correlation matrix | 1 day | Feature-complete |
 | **P4** | ☐ Pending | Dilution module upgrade + LOD/LOQ feature | 0.5-1 day | Adds genuine new science |
