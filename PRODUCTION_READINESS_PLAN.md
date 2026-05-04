@@ -8,7 +8,7 @@
 
 ## 🟡 Current Working State (last updated 2026-05-04 by Sonnet 4.6)
 
-**Active branch:** `feature/p2-comparative` (in progress). P0 ☑ and P1 ☑ merged to develop (PR #2). P2 implementation complete — needs smoke test, then PR → develop, squash merge, tag `v2.0.0-p2`.
+**Active branch:** `develop` (clean). P0 ☑ P1 ☑ P2 ☑ all merged. Next: cut `feature/p3-quant` from develop and start the Quantification module upgrade.
 
 ### Phase completion summary
 
@@ -16,7 +16,8 @@
 |-------|--------|-------------------|--------|
 | P0 — Foundation | ☑ Done | PR #1 merged → develop; `v2.0.0-p0` tagged | `feature/p0-foundation` |
 | P1 — Report Builder | ☑ Done | PR #2 merged → develop; `v2.0.0-p1` tagged | `feature/p1-report-builder` |
-| P2 — Comparative | ⏳ Smoke test pending | — | `feature/p2-comparative` |
+| P2 — Comparative | ☑ Done | PR #3 merged → develop; `v2.0.0-p2` tagged | `feature/p2-comparative` |
+| P3 — Quantification | ☐ Next | — | cut from develop |
 
 ### What's done in P2 (Comparative module upgrade)
 
@@ -28,14 +29,9 @@
 - ✅ **`HUMAN_TRANSCRIPTION_FACTORS` moved to config** — removed class attribute from `comparative_visualizer.py`; now imported from `config/plot_configs.py` (single source of truth).
 - ✅ **"Add to Report" wired** — `.module = "comparative"` set on all 5 PlotManager/MplPlotManager instances (volcano, violin, manhattan, dotplot ×N, heatmap). Figures now appear under "comparative" in the Report tab, not "unknown".
 
-### Pending to close out P2
+### What's next — P3 (Quantification module)
 
-| # | Task |
-|---|------|
-| 1 | Run smoke test (see §Verification) |
-| 2 | Open PR `feature/p2-comparative → develop` |
-| 3 | Merge (squash) → `develop`, tag `v2.0.0-p2` |
-| 4 | Cut `feature/p3-quant` from `develop` |
+Cut `feature/p3-quant` from `develop`. See §3.3 for full scope. Critical files: `modules/quant_module.py`, `visualizations/quant_visualizer.py`.
 
 ### Environment notes (critical for resumption)
 
