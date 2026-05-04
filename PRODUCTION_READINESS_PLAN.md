@@ -4,6 +4,63 @@
 > **Branching baseline:** `develop` (after merge of `feature/single-cell-integration`).
 > **Source:** Originally drafted via interactive planning session; this file in the repo is the source of truth going forward — update it as phases land.
 
+---
+
+## 🟡 Current Working State (last updated 2026-05-03 by Opus 4.7)
+
+**Active branch:** `feature/p0-foundation` (pushed to `origin`).
+
+### Commits made on this branch so far
+
+```
+bd6a21e chore(p0): align COLUMN_FALLBACKS with demo data column names
+efc55cc feat(p0): extend PlotManager with persistent edits, exports, MplPlotManager
+8278e47 feat(p0): add safe_render() tab isolation primitive and to_hex()
+e4a1f04 feat(p0): add utils/sanity.py validation helpers
+621d3f9 feat(p0): pin kaleido/jinja2 and populate central plot config
+33992d1 docs: add production readiness plan
+```
+
+(Step 0 commits already on `develop`: `f26d708` SCP enrichment filters; `0d27126` merge.)
+
+### What's done in P0 (Foundation layer)
+
+- ✅ **`requirements.txt`** — `kaleido==0.2.1` and `jinja2>=3.1.0` pinned. (Not yet installed in `.venv` — see Pending below.)
+- ✅ **`config/plot_configs.py`** — populated with `THEMES`, `OKABE_ITO_PALETTE`/`COLORBLIND_PALETTE`, `HUMAN_TRANSCRIPTION_FACTORS` (63 symbols, frozenset, single source replacing the duplicates in `quant_visualizer.py:29-37` and `comparative_visualizer.py:22-30`), `SIGNIFICANCE_DEFAULTS`/`SIGNIFICANCE_PRESETS`, `QC_THRESHOLDS`, `DEVIATION_BUCKETS`, `COLUMN_FALLBACKS` (aligned with real demo data — Quant uses `Level3`, SCP uses lowercase `condition`/`concentration`/`replicate`, etc.), `DIA_RUN_NAME_PATTERNS`, `EXPORT_DEFAULTS`.
+- ✅ **`utils/sanity.py`** — new module. `ValidationResult` dataclass, `validate_columns`, `detect_column`, `check_sample_alignment`, `check_value_ranges`, `summarize_missingness`, `gene_resolution_report`, `render_validation` (lazy Streamlit import for unit-testability). Verified with 7 unit tests.
+- ✅ **`utils/helpers.py`** — extended. `safe_render(label, fn, *args, reset_keys=None, **kwargs)` is the new tab-isolation primitive. `to_hex(color)` replaces fragile inline RGB parsers. `handle_plotting_errors` decorator preserved unchanged. Verified with 9 to_hex round-trips and 2 invalid-input cases.
+- ✅ **`utils/plot_manager.py`** — extended from 108 lines to ~470. Edits now persist across regeneration (params-hash invalidation). New editor controls: font size, legend position, gridlines (in addition to title/height/marker size/axis labels). Static exports added: PNG/SVG/HTML download buttons (PNG/SVG via `kaleido` — gracefully disabled with tooltip if missing; HTML via `fig.to_html(include_plotlyjs="cdn")`). New `MplPlotManager` class for matplotlib `BytesIO` figures. "Add to Report" stub queues into `st.session_state.report_queue` (real builder lands in P1).
+
+### What's pending to close out P0 (per the P0 → P1 handover criteria)
+
+| # | Task | Notes |
+|---|------|-------|
+| 1 | `pip install kaleido==0.2.1` in `.venv` | Required for PNG/SVG buttons to actually produce bytes. Without it, buttons render but are disabled. |
+| 2 | Wire `safe_render` into `app.py` for top-level tab bodies | Per Section 2.2: `with tab_quant: safe_render("Quantification", render_quant_module)`. Each module needs `reset_keys` listing its session_state keys. |
+| 3 | P0 smoke test (manual) | (a) Launch app, open SCP module, generate a plot, click each of PNG/SVG/HTML — files open and render. (b) Inject a deliberate exception inside one tab body, confirm error card appears, other tabs still load. |
+| 4 | Push remaining commits | After Step 1-3, `git push origin feature/p0-foundation` — last push was at commit `33992d1`. |
+| 5 | Open PR `feature/p0-foundation → develop` | Title: "P0: Foundation utilities (PlotManager / safe_render / sanity / config)". Body should list smoke-test results. |
+| 6 | Merge PR (squash) → `develop`, tag `v2.0.0-p0` | After merge, mark P0 ☑ Done in the phasing table below. |
+| 7 | Update this section with merge commit + cut `feature/p1-report-builder` | Keep this Current Working State section in sync as work lands. |
+
+### Environment notes (critical for resumption)
+
+- **Python venv** is at `.venv/` in repo root: `source .venv/bin/activate`. Streamlit 1.36.0 + pandas 2.2.2 are installed.
+- **`python` is NOT on PATH unactivated** — system has only `python3` (3.9.6, too old). Always activate the venv first.
+- **Demo data** lives on a mounted volume at `/Volumes/VanEykJLab-Files/ByPerson/Ajay/Pro-Vizualize-2.0-Demo/` — see the `reference_demo_data.md` memory for per-folder layout. Used for smoke tests; the user said do not over-engineer QC validation around it.
+- **`.claude/settings.local.json`** has unrelated harness config drift in working tree — leave it; do not stage.
+
+### What P1 looks like (next phase, for the picking-up instance)
+
+Cut `feature/p1-report-builder` from `develop` after P0 merges. P1 deliverables:
+- New `utils/report_builder.py` with `ReportBuilder` class (see Section 2.1 — `add_figure / add_table / add_section / remove / reorder / export_html / export_zip`).
+- New `templates/report.html.j2` (Jinja2, embeds Plotly figures via `fig.to_html(full_html=False, include_plotlyjs='cdn')`, matplotlib figures inline base64-PNG).
+- New top-level "Report" tab in `app.py` with download buttons for HTML and ZIP.
+- Wire `_queue_for_report` (currently a stub at `utils/plot_manager.py:_queue_for_report`) to the real builder.
+- P1 smoke test: SCP → add 2 figures → Report tab → download both formats → both open and contain the figures.
+
+---
+
 ## Context
 
 Pro-Visualize is a Streamlit app helping proteomics scientists explore their data across 6 analysis types: QC (DIA + Targeted), Dilution Series, Quantification, Comparative, Pathway Enrichment, and Single-Cell Proteomics (SCP). The SCP module (most recently built) sets a clear quality bar — `PlotManager`-based per-figure editing, granular `try/except` per stage, `pp_state` workflow gating, AnnData layer-based data lineage, and rich user feedback. The older modules drift from this standard in five concrete ways:
