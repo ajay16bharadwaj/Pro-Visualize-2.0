@@ -870,6 +870,30 @@ class SCPTab:
                     available_cols = enr_res.columns.tolist()
                     display_cols = [c for c in ["Gene_set", "Term", "Overlap", "Adjusted P-value", "Genes"] if c in available_cols]
                     enr_show = enr_res[display_cols].sort_values("Adjusted P-value") if "Adjusted P-value" in display_cols else enr_res[display_cols]
+
+                    _fc1, _fc2 = st.columns([3, 1])
+                    with _fc1:
+                        _term_search = st.text_input(
+                            "Search terms", value="",
+                            placeholder="Type to filter pathway names…",
+                            key="scp_enr_term_search",
+                        )
+                    with _fc2:
+                        _min_genes = st.number_input(
+                            "Min. overlap genes", min_value=0, value=3, step=1,
+                            key="scp_enr_min_genes",
+                        )
+                    if _term_search:
+                        enr_show = enr_show[
+                            enr_show["Term"].str.contains(_term_search, case=False, na=False)
+                        ]
+                    if _min_genes > 0 and "Overlap" in enr_show.columns:
+                        try:
+                            _overlap_n = enr_show["Overlap"].str.split("/").str[0].astype(int)
+                            enr_show = enr_show[_overlap_n >= _min_genes]
+                        except (ValueError, AttributeError):
+                            pass
+
                     st.dataframe(enr_show, use_container_width=True)
 
                     selected_terms = st.multiselect(

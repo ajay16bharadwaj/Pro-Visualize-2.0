@@ -602,9 +602,10 @@ class SCPVisualizer:
             return {}
         mapping = {}
         for var_name, gene_sym in self.adata.var[gene_col].items():
-            sym = str(gene_sym).strip()
-            if sym.lower() not in ("", "nan", "none", "na"):
-                mapping[sym] = var_name
+            for sym in str(gene_sym).split(";"):
+                sym = sym.strip()
+                if sym.lower() not in ("", "nan", "none", "na"):
+                    mapping[sym] = var_name
         return mapping
 
     def compute_activity_scores(self, gene_sets: dict) -> list:
