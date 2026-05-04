@@ -12,6 +12,7 @@ from modules.dilution_module import render as render_dilution
 from modules.quant_module import render as render_quant
 from modules.comparative_module import render as render_comp
 from modules.scp_module import render as render_scp
+from utils.helpers import safe_render
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -52,27 +53,48 @@ with tab_welcome:
     """)
 
 with tab_qc:
-    # The render_qc function now builds the entire UI for the QC section,
-    # including its own internal tabs for DIA and Targeted QC.
-    render_qc()
+    safe_render(
+        "QC Analysis",
+        render_qc,
+        reset_keys=[
+            "dia_qc_visualizer", "targeted_qc_visualizer",
+            "dia_metadata_confirmed", "q_value_cutoff", "sentinel_peptides",
+        ],
+    )
 
 with tab_dilution:
-    #st.header("Dilution Series Analysis")
-    #st.info("This section is currently under development. 🏗️")
-    # Future: 
-    render_dilution()
+    safe_render(
+        "Dilution Series",
+        render_dilution,
+        reset_keys=["dilution_visualizer"],
+    )
 
 with tab_quant:
-    #st.header("Protein Quantification")
-    #st.info("This section is currently under development. 🏗️")
-    # Future: Call 
-    render_quant()
+    safe_render(
+        "Quantification",
+        render_quant,
+        reset_keys=["quant_visualizer"],
+    )
 
 with tab_comp:
-    render_comp()
+    safe_render(
+        "Comparative Analysis",
+        render_comp,
+        reset_keys=[
+            "comp_visualizer", "enrichment_results",
+            "selected_comparison", "significant_proteins",
+        ],
+    )
 
 with tab_scp:
-    render_scp()
+    safe_render(
+        "Single-Cell Proteomics",
+        render_scp,
+        reset_keys=[
+            "scp_visualizer", "scp_de_results",
+            "scp_enr_results", "scp_score_cols",
+        ],
+    )
 
 with tab_chat:
     st.info("This section is currently under development. 🏗️")
