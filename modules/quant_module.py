@@ -2,11 +2,10 @@ import streamlit as st
 import pandas as pd
 import logging
 import plotly.express as px
-from plotly import colors as pc 
 from visualizations.quant_visualizer import QuantificationVisualizer
-from utils.helpers import handle_plotting_errors
-from utils.plot_manager import PlotManager
-from io import BytesIO
+from utils.helpers import handle_plotting_errors, to_hex
+from utils.plot_manager import PlotManager, MplPlotManager
+from utils.sanity import gene_resolution_report, render_validation
 
 # Set up a logger for this module
 logger = logging.getLogger(__name__)
@@ -18,9 +17,11 @@ class QuantificationTab:
     
     # Keys used for PlotManager state tracking
     PLOT_KEYS = [
-        "quant_counts", "quant_missing_heat", "quant_missing_dist", 
-        "quant_overlap", "quant_coverage", "quant_rank", 
-        "quant_pca_anno", "quant_pca_cluster"
+        "quant_counts", "quant_missing_heat", "quant_missing_dist",
+        "quant_overlap", "quant_coverage", "quant_rank",
+        "quant_pca_anno", "quant_pca_cluster",
+        "quant_venn", "quant_upset", "quant_dendro",
+        "quant_intensity_dist", "quant_corr", "quant_cv_intensity",
     ]
 
     def __init__(self):
@@ -108,14 +109,13 @@ class QuantificationTab:
                 if groups:
                     st.markdown("**Customize Group Colors:**")
                     cols = st.columns(4)
-                    
-                    # FIX: Convert Plotly's RGB strings to Hex for the color picker
-                    # pc.unlabel_rgb returns a tuple of floats, we cast to int for formatting
-                    try:
-                        safe_colors = ['#%02x%02x%02x' % tuple(int(x) for x in pc.unlabel_rgb(c)) for c in px.colors.qualitative.Safe]
-                    except Exception:
-                        # Fallback if colors are already hex or other format
-                        safe_colors = px.colors.qualitative.Safe
+
+                    safe_colors = []
+                    for c in px.colors.qualitative.Safe:
+                        try:
+                            safe_colors.append(to_hex(c))
+                        except Exception:
+                            safe_colors.append(c)
 
                     for i, group in enumerate(groups):
                         default_c = safe_colors[i % len(safe_colors)]
@@ -132,11 +132,12 @@ class QuantificationTab:
             
             if st.button("Apply Settings to All Plots", type="primary", use_container_width=True):
                 for key in self.PLOT_KEYS:
-                    fig_key = f"{key}_fig"
-                    if fig_key in st.session_state:
-                        st.session_state[fig_key] = None
-                
-                st.success(f"Settings applied! Plots will regenerate automatically.")
+                    for suffix in ("_fig", "_mpl_buf"):
+                        sk = f"{key}{suffix}"
+                        if sk in st.session_state:
+                            st.session_state[sk] = None
+
+                st.success("Settings applied! Plots will regenerate automatically.")
                 st.rerun()
 
         global_kwargs = {"template": selected_template}
@@ -153,6 +154,11 @@ class QuantificationTab:
         
         # Render global settings and get kwargs
         global_plot_kwargs = self._render_global_settings()
+
+        render_validation(
+            [gene_resolution_report(visualizer.protein_df, 'Gene Name')],
+            header="Gene Symbol Coverage",
+        )
 
         intersections_tab, completeness_tab, dist_corr_tab, clustering_tab = st.tabs([
             "🔎 Set Intersections", "📊 Data Completeness",
@@ -172,26 +178,21 @@ class QuantificationTab:
                     default_selection = all_groups[:2] if len(all_groups) >= 2 else all_groups
                     selected_groups = st.multiselect("Select groups for Venn Diagram:", options=all_groups, default=default_selection, key="venn_group_select")
                     if 2 <= len(selected_groups) <= 6:
-                        col1, col2, col3 = st.columns([0.2, 0.6, 0.2])
-                        with col2:
-                            try:
-                                with st.spinner("Creating Venn Diagram..."):
-                                    fig = visualizer.plot_venn_diagram(selected_groups)
-                                    st.pyplot(fig, use_container_width=True)
-                            except Exception as e: st.error(f"Failed to create Venn diagram: {e}")
-                    elif len(selected_groups) > 0: st.error("Please select between 2 and 6 groups.")
+                        mpl_venn = MplPlotManager("quant_venn")
+                        mpl_venn.module = "quant"
+                        mpl_venn.render_generate_button(visualizer.plot_venn_diagram, selected_groups=selected_groups)
+                        mpl_venn.render_plot_and_editor()
+                    elif len(selected_groups) > 0:
+                        st.error("Please select between 2 and 6 groups.")
                 with upset_inner_tab:
                     if len(visualizer.experimental_groups) < 3:
                         st.warning("An UpSet plot is only generated for 3 or more experimental groups.", icon="ℹ️")
                     else:
                         st.info("The UpSet plot shows intersections for all groups, ideal for complex comparisons.")
-                        try:
-                            with st.spinner("Creating UpSet Plot..."):
-                                col1, col2, col3 = st.columns([0.1, 0.8, 0.1])
-                                with col2:
-                                    fig = visualizer.plot_upset()
-                                    st.pyplot(fig, use_container_width=True)
-                        except Exception as e: st.error(f"Failed to create UpSet plot: {e}")
+                        mpl_upset = MplPlotManager("quant_upset")
+                        mpl_upset.module = "quant"
+                        mpl_upset.render_generate_button(visualizer.plot_upset)
+                        mpl_upset.render_plot_and_editor()
 
         # --- TAB 2: COMPLETENESS (Updated with PlotManager) ---
         with completeness_tab:
@@ -200,6 +201,7 @@ class QuantificationTab:
             
             with counts_inner_tab:
                 pm_counts = PlotManager("quant_counts")
+                pm_counts.module = "quant"
                 pm_counts.render_generate_button(visualizer.plot_protein_counts, **global_plot_kwargs)
                 pm_counts.render_plot_and_editor()
             
@@ -210,12 +212,14 @@ class QuantificationTab:
                         st.warning("An annotation file is required for the missingness heatmap.", icon="⚠️")
                     else:
                         pm_heat = PlotManager("quant_missing_heat")
+                        pm_heat.module = "quant"
                         pm_heat.render_generate_button(visualizer.plot_missing_values_heatmap, **global_plot_kwargs)
                         pm_heat.render_plot_and_editor()
-                        
+
                 with distribution_tab:
                     st.info("This plot helps diagnose the nature of missing data.")
                     pm_dist = PlotManager("quant_missing_dist")
+                    pm_dist.module = "quant"
                     pm_dist.render_generate_button(visualizer.plot_missing_value_distribution, **global_plot_kwargs)
                     pm_dist.render_plot_and_editor()
             
@@ -224,27 +228,30 @@ class QuantificationTab:
                 col1, col2 = st.columns(2)
                 with col1:
                     pm_overlap = PlotManager("quant_overlap")
+                    pm_overlap.module = "quant"
                     pm_overlap.render_generate_button(visualizer.plot_protein_overlap, **global_plot_kwargs)
                     pm_overlap.render_plot_and_editor()
                 with col2:
                     pm_cov = PlotManager("quant_coverage")
+                    pm_cov.module = "quant"
                     pm_cov.render_generate_button(visualizer.plot_protein_coverage_chart, **global_plot_kwargs)
                     pm_cov.render_plot_and_editor()
 
-        # --- TAB 3: DISTRIBUTIONS (Rank Order updated) ---
+        # --- TAB 3: DISTRIBUTIONS ---
         with dist_corr_tab:
             st.markdown("### Intensity Distributions and Sample Correlations")
-            dist_inner_tab, rank_inner_tab, corr_inner_tab = st.tabs(["Intensity Distribution", "Protein Rank Order", "Correlation Matrix"])
+            dist_inner_tab, rank_inner_tab, cv_inner_tab, corr_inner_tab = st.tabs([
+                "Intensity Distribution", "Protein Rank Order", "CV vs Intensity", "Correlation Matrix"
+            ])
 
             with dist_inner_tab:
                 if visualizer.annotation_df is None:
                     st.warning("An annotation file is required to generate this plot.", icon="⚠️")
                 else:
-                    try:
-                        with st.spinner("Generating intensity distribution plot..."):
-                            plot_buffer = visualizer.plot_intensity_distribution()
-                            st.image(plot_buffer, caption="Group-wise Intensity Distribution")
-                    except Exception as e: st.error(f"Failed to generate plot: {e}")
+                    mpl_int_dist = MplPlotManager("quant_intensity_dist")
+                    mpl_int_dist.module = "quant"
+                    mpl_int_dist.render_generate_button(visualizer.plot_intensity_distribution)
+                    mpl_int_dist.render_plot_and_editor()
             
             with rank_inner_tab:
                 st.markdown("### Protein Rank by Average Intensity")
@@ -302,9 +309,8 @@ class QuantificationTab:
                     aw = ac3.slider("Width", 1, 5, 1, key="quant_arrow_width")
                     arrow_config = {'arrowhead': ah, 'arrowsize': as_, 'arrowwidth': aw}
 
-                # --- SUBMIT BUTTON ---
-                # The PlotManager renders the "Generate/Update Plot" button here.
                 pm_rank = PlotManager("quant_rank")
+                pm_rank.module = "quant"
                 pm_rank.render_generate_button(
                     visualizer.plot_protein_rank_order,
                     proteins_to_annotate=cleaned_annotations,
@@ -317,8 +323,30 @@ class QuantificationTab:
                 )
                 pm_rank.render_plot_and_editor()
 
+            with cv_inner_tab:
+                st.markdown("### Protein CV (%) vs Mean Intensity")
+                st.info("High-CV proteins at low intensity are typically noise. Use this plot to choose an intensity filter before downstream analysis.")
+                pm_cv = PlotManager("quant_cv_intensity")
+                pm_cv.module = "quant"
+                pm_cv.render_generate_button(visualizer.plot_cv_vs_intensity, **global_plot_kwargs)
+                pm_cv.render_plot_and_editor()
+
             with corr_inner_tab:
-                st.info("This section is under development. 🏗️")
+                st.markdown("### Sample Correlation Matrix")
+                st.info("Pearson/Spearman r between all sample pairs, reordered by hierarchical clustering. Upper triangle masked for clarity; values annotated for ≤30 samples.")
+                corr_method = st.selectbox(
+                    "Correlation method:",
+                    options=['pearson', 'spearman'],
+                    key="quant_corr_method",
+                )
+                pm_corr = PlotManager("quant_corr")
+                pm_corr.module = "quant"
+                pm_corr.render_generate_button(
+                    visualizer.plot_correlation_matrix,
+                    method=corr_method,
+                    **global_plot_kwargs,
+                )
+                pm_corr.render_plot_and_editor()
             
         # --- TAB 4: CLUSTERING (Updated) ---
         with clustering_tab:
@@ -350,6 +378,7 @@ class QuantificationTab:
                     show_labels_anno = st.toggle("Show sample labels", key="pca_anno_labels")
                     
                     pm_pca_anno = PlotManager("quant_pca_anno")
+                    pm_pca_anno.module = "quant"
                     pm_pca_anno.render_generate_button(
                         visualizer.plot_pca_by_annotation,
                         color_by=color_by, 
@@ -370,6 +399,7 @@ class QuantificationTab:
                 show_labels_cluster = st.toggle("Show sample labels", key="pca_cluster_labels")
 
                 pm_pca_cluster = PlotManager("quant_pca_cluster")
+                pm_pca_cluster.module = "quant"
                 pm_pca_cluster.render_generate_button(
                     visualizer.plot_pca_with_clusters,
                     n_clusters=n_clusters,
@@ -381,18 +411,17 @@ class QuantificationTab:
             with dendro_tab:
                 st.markdown("#### Hierarchical Clustering Dendrogram")
                 st.info("Visualize how samples cluster together based on their protein expression profiles.")
-                
+
                 method = st.selectbox(
                     "Clustering method:",
-                    options=['ward', 'complete', 'average', 'single']
+                    options=['ward', 'complete', 'average', 'single'],
+                    key="quant_dendro_method",
                 )
-                
-                try:
-                    with st.spinner("Generating dendrogram..."):
-                        plot_buffer = visualizer.plot_dendrogram(method=method)
-                        st.image(plot_buffer, caption="Sample Clustering Dendrogram")
-                except Exception as e:
-                    st.error(f"Failed to generate dendrogram: {e}")
+
+                mpl_dendro = MplPlotManager("quant_dendro")
+                mpl_dendro.module = "quant"
+                mpl_dendro.render_generate_button(visualizer.plot_dendrogram, method=method)
+                mpl_dendro.render_plot_and_editor()
 
     def render(self):
         """Renders the entire Quantification Analysis tab."""

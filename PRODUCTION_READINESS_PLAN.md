@@ -8,7 +8,7 @@
 
 ## 🟡 Current Working State (last updated 2026-05-04 by Sonnet 4.6)
 
-**Active branch:** `develop` (clean). P0 ☑ P1 ☑ P2 ☑ all merged. Next: cut `feature/p3-quant` from develop and start the Quantification module upgrade.
+**Active branch:** `feature/p4-dilution` (next). P0 ☑ P1 ☑ P2 ☑ P3 ☑ all merged. Cut `feature/p4-dilution` from develop.
 
 ### Phase completion summary
 
@@ -17,7 +17,8 @@
 | P0 — Foundation | ☑ Done | PR #1 merged → develop; `v2.0.0-p0` tagged | `feature/p0-foundation` |
 | P1 — Report Builder | ☑ Done | PR #2 merged → develop; `v2.0.0-p1` tagged | `feature/p1-report-builder` |
 | P2 — Comparative | ☑ Done | PR #3 merged → develop; `v2.0.0-p2` tagged | `feature/p2-comparative` |
-| P3 — Quantification | ☐ Next | — | cut from develop |
+| P3 — Quantification | ☑ Done | PR #4 merged → develop; `v2.0.0-p3` tagged | `feature/p3-quant` |
+| P4 — Dilution Series | ☐ Next | — | `feature/p4-dilution` |
 
 ### What's done in P2 (Comparative module upgrade)
 
@@ -29,9 +30,33 @@
 - ✅ **`HUMAN_TRANSCRIPTION_FACTORS` moved to config** — removed class attribute from `comparative_visualizer.py`; now imported from `config/plot_configs.py` (single source of truth).
 - ✅ **"Add to Report" wired** — `.module = "comparative"` set on all 5 PlotManager/MplPlotManager instances (volcano, violin, manhattan, dotplot ×N, heatmap). Figures now appear under "comparative" in the Report tab, not "unknown".
 
-### What's next — P3 (Quantification module)
+### What's done in P3 (Quantification module)
 
-Cut `feature/p3-quant` from `develop`. See §3.3 for full scope. Critical files: `modules/quant_module.py`, `visualizations/quant_visualizer.py`.
+- ✅ **Venn/UpSet/Dendrogram/IntensityDist migrated to `MplPlotManager`** — title editing, DPI, PNG download, and "Add to Report" wired in.
+- ✅ **Correlation Matrix tab implemented** — Pearson/Spearman with hierarchical clustering reorder, upper triangle masked, values annotated for ≤30 samples.
+- ✅ **CV vs Intensity scatter** — new plot tab showing protein-level CV% vs log2 mean intensity.
+- ✅ **`HUMAN_TRANSCRIPTION_FACTORS` removed from class** — imported from `config/plot_configs` (single source of truth).
+- ✅ **`to_hex()` replaces fragile RGB parser** — `pc.unlabel_rgb` removed; `utils/helpers.to_hex()` used for group color picker.
+- ✅ **All PlotManager instances have `.module = "quant"`** — "Add to Report" routes correctly.
+- ✅ **Gene symbol coverage banner** — `sanity.gene_resolution_report` / `render_validation` wired at top of dashboard.
+
+### What's next — P4 (Dilution module)
+
+Scope defined in §3.2. Cut `feature/p4-dilution` from develop. Critical files:
+- `modules/dilution_module.py`
+- `visualizations/dilution_series.py`
+
+Deliverables:
+1. Surface `DEVIATION_BUCKETS` as user-configurable sliders (currently hardcoded).
+2. Make `Concentration`/`Replicate`/`Group` column names configurable via text inputs.
+3. Add CSV export for per-protein R² table, CV-by-concentration matrix, completeness summary.
+4. Add R² histogram + ranked R² table.
+5. **New plot**: LOD/LOQ estimation per protein (CCβ / 3.3·σ/slope) with sortable summary table.
+6. **New sanity check**: warn on non-monotonic `Concentration` per replicate; warn on negative linear fit slope.
+7. Wire all plots into ReportBuilder (`.module = "dilution"` on all PlotManagers).
+
+Smoke-test checklist:
+- Upload dilution fixture from demo data folder → generate all existing plots → confirm new LOD/LOQ tab renders → adjust deviation sliders → add to report → export HTML + ZIP.
 
 ### Environment notes (critical for resumption)
 

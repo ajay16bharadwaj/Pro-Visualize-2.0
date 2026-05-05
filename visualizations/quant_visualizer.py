@@ -17,24 +17,16 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from scipy.spatial import ConvexHull
 import scipy.cluster.hierarchy as sch
+from scipy.spatial.distance import squareform
 
-# Set up a logger for this module
+from config.plot_configs import HUMAN_TRANSCRIPTION_FACTORS
+
 logger = logging.getLogger(__name__)
 
 class QuantificationVisualizer:
     """
     Handles data processing and visualization for quantification analysis.
     """
-
-    HUMAN_TRANSCRIPTION_FACTORS = set([
-        'ATF1', 'ATF2', 'ATF3', 'ATF4', 'ATF5', 'ATF6', 'ATF7', 'CREB1', 'CREB3',
-        'CREB5', 'FOS', 'FOSB', 'JUN', 'JUNB', 'JUND', 'MYC', 'MYCN', 'MAX', 'MAD',
-        'CEBPA', 'CEBPB', 'CEBPD', 'EGR1', 'EGR2', 'EGR3', 'EGR4', 'SP1', 'SP2',
-        'SP3', 'SP4', 'KLF1', 'KLF2', 'KLF4', 'KLF5', 'STAT1', 'STAT2', 'STAT3',
-        'STAT4', 'STAT5A', 'STAT5B', 'STAT6', 'NFKB1', 'NFKB2', 'RELA', 'RELB',
-        'TP53', 'TP63', 'TP73', 'SOX2', 'SOX9', 'POU5F1', 'NANOG', 'GATA1', 'GATA2',
-        'GATA3', 'GATA4', 'GATA6', 'RUNX1', 'RUNX2', 'RUNX3', 'TCF3', 'TCF4', 'LEF1'
-    ])
 
     def __init__(self, protein_df: pd.DataFrame, annotation_df: pd.DataFrame = None,
                  protein_col: str = 'Protein', sample_col: str = 'Level3',
@@ -101,22 +93,28 @@ class QuantificationVisualizer:
             
         return protein_sets
 
-    def plot_venn_diagram(self, selected_groups: list):
+    def plot_venn_diagram(self, selected_groups: list, title: str = '', figsize: tuple = (4, 4), dpi: int = 150, **kwargs) -> BytesIO:
         if not (2 <= len(selected_groups) <= 6):
             raise ValueError("Venn diagrams are supported for 2 to 6 groups.")
-            
+
         all_protein_sets = self._get_protein_sets_by_group()
         sets_to_plot = {group: all_protein_sets.get(group, set()) for group in selected_groups}
 
-        fig, ax = plt.subplots(figsize=(4, 4))
+        fig, ax = plt.subplots(figsize=figsize)
         venn(sets_to_plot, ax=ax)
+        if title:
+            ax.set_title(title)
         plt.tight_layout()
-        return fig
+        buf = BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=dpi)
+        buf.seek(0)
+        plt.close(fig)
+        return buf
 
-    def plot_upset(self):
+    def plot_upset(self, title: str = '', figsize: tuple = (4, 8), dpi: int = 150, **kwargs) -> BytesIO:
         protein_sets = self._get_protein_sets_by_group()
         all_proteins = set.union(*protein_sets.values())
-        
+
         memberships = []
         for protein in all_proteins:
             protein_membership = [
@@ -126,11 +124,15 @@ class QuantificationVisualizer:
 
         upset_data = from_memberships(memberships)
         upset_plot = UpSet(upset_data, subset_size='count', show_counts='%d', sort_by='cardinality')
-        
-        fig = plt.figure(figsize=(4, 8))
+
+        fig = plt.figure(figsize=figsize)
         upset_plot.plot(fig=fig)
-        fig.suptitle("Protein Intersections Across Experimental Groups", fontsize=12)
-        return fig
+        fig.suptitle(title or "Protein Intersections Across Experimental Groups", fontsize=12)
+        buf = BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=dpi)
+        buf.seek(0)
+        plt.close(fig)
+        return buf
     
     def plot_protein_counts(self, **kwargs):
         """Generates a bar plot of the number of quantified proteins per sample."""
@@ -316,11 +318,8 @@ class QuantificationVisualizer:
         fig.update_xaxes(linecolor='black', showline=True)
         return fig
     
-    def plot_intensity_distribution(self):
-        """
-        Generates a faceted density plot using Seaborn.
-        (Static plot, does not use kwargs)
-        """
+    def plot_intensity_distribution(self, title: str = '', figsize: tuple = (12, 4), dpi: int = 150, **kwargs) -> BytesIO:
+        """Generates a faceted density plot using Seaborn."""
         logger.info("Generating intensity distribution plot...")
         if self.annotation_df is None:
             raise ValueError("Annotation data is required.")
@@ -334,18 +333,21 @@ class QuantificationVisualizer:
         merged_data = merged_data[merged_data['Intensity'] > 0].copy()
         merged_data['log10(Intensity)'] = np.log10(merged_data['Intensity'])
 
+        n_groups = merged_data[self.group_col].nunique()
+        col_wrap = min(3, n_groups)
         g = sns.FacetGrid(
             merged_data, col=self.group_col, hue='Sample',
-            col_wrap=3, height=4, aspect=1.2, sharex=True, sharey=True
+            col_wrap=col_wrap, height=figsize[1], aspect=figsize[0] / max(col_wrap * figsize[1], 1),
+            sharex=True, sharey=True
         )
         g.map(sns.kdeplot, "log10(Intensity)", fill=True, alpha=0.2)
         g.map(sns.kdeplot, "log10(Intensity)")
         g.set_axis_labels("log10(Intensity)", "Density")
         g.set_titles(col_template="{col_name}")
-        g.fig.suptitle("Protein Intensity Density Distribution", y=1.03, fontsize=16)
-        
+        g.fig.suptitle(title or "Protein Intensity Density Distribution", y=1.03, fontsize=16)
+
         buf = BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight")
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=dpi)
         buf.seek(0)
         plt.close(g.fig)
         return buf
@@ -354,8 +356,8 @@ class QuantificationVisualizer:
         """Counts how many proteins in the data match the built-in TF list."""
         if 'Gene Name' not in self.protein_df.columns:
             return 0
-        tf_found = self.protein_df['Gene Name'].isin(self.HUMAN_TRANSCRIPTION_FACTORS)
-        return tf_found.sum()   
+        tf_found = self.protein_df['Gene Name'].isin(HUMAN_TRANSCRIPTION_FACTORS)
+        return tf_found.sum()
 
     def plot_protein_rank_order(self, proteins_to_annotate=None, color_by_option='None',
                                 custom_list=None, keyword=None, annotate_highlighted=False,
@@ -396,7 +398,7 @@ class QuantificationVisualizer:
             color_map['In Custom List'] = '#f28e2b'
             highlighted_proteins = rank_df.loc[mask, 'Gene Name'].fillna(rank_df.loc[mask, self.protein_col])
         elif color_by_option == 'Transcription Factors':
-            mask = rank_df['Gene Name'].isin(self.HUMAN_TRANSCRIPTION_FACTORS)
+            mask = rank_df['Gene Name'].isin(HUMAN_TRANSCRIPTION_FACTORS)
             rank_df.loc[mask, 'Color'] = 'Transcription Factor'
             color_map['Transcription Factor'] = '#e15759'
             highlighted_proteins = rank_df.loc[mask, 'Gene Name']
@@ -539,19 +541,123 @@ class QuantificationVisualizer:
         )
         return fig
 
-    def plot_dendrogram(self, method='ward'):
+    def plot_dendrogram(self, method: str = 'ward', title: str = '', figsize: tuple = None, dpi: int = 150, **kwargs) -> BytesIO:
         """Generates a hierarchical clustering dendrogram."""
         scaled_data, samples = self._prepare_data_for_clustering()
         Z = sch.linkage(scaled_data, method=method)
-        
-        fig, ax = plt.subplots(figsize=(10, max(6, len(samples) * 0.3)))
-        sch.dendrogram(Z, labels=samples.tolist(), orientation='right', leaf_font_size=10)
-        plt.title('Hierarchical Clustering Dendrogram', fontsize=16)
-        plt.xlabel('Distance')
+
+        actual_figsize = figsize if figsize else (10, max(6, len(samples) * 0.3))
+        fig, ax = plt.subplots(figsize=actual_figsize)
+        sch.dendrogram(Z, labels=samples.tolist(), orientation='right', leaf_font_size=10, ax=ax)
+        ax.set_title(title or 'Hierarchical Clustering Dendrogram', fontsize=16)
+        ax.set_xlabel('Distance')
         plt.tight_layout()
-        
+
         buf = BytesIO()
-        plt.savefig(buf, format="png")
+        plt.savefig(buf, format="png", dpi=dpi)
         buf.seek(0)
         plt.close(fig)
         return buf
+
+    def plot_correlation_matrix(self, method: str = 'pearson', **kwargs):
+        """Sample×sample correlation heatmap, clustered, lower-triangle only."""
+        logger.info(f"Generating {method} correlation matrix...")
+
+        numeric_df = self.protein_df[self.sample_cols].copy()
+        numeric_df.replace(0, np.nan, inplace=True)
+        numeric_df.dropna(axis=1, how='all', inplace=True)
+
+        if numeric_df.shape[1] < 2:
+            fig = go.Figure()
+            fig.update_layout(title="Need at least 2 samples for a correlation matrix")
+            return fig
+
+        imputer = SimpleImputer(strategy='mean')
+        imputed = pd.DataFrame(
+            imputer.fit_transform(numeric_df),
+            columns=numeric_df.columns,
+            index=numeric_df.index,
+        )
+
+        corr = imputed.corr(method=method)
+
+        dist = np.clip(1.0 - corr.values, 0.0, 2.0)
+        np.fill_diagonal(dist, 0.0)
+        condensed = squareform(dist, checks=False)
+        Z = sch.linkage(condensed, method='ward')
+        order = sch.leaves_list(Z)
+
+        corr_ord = corr.iloc[order, order]
+        n = len(corr_ord)
+        upper_mask = np.triu(np.ones((n, n), dtype=bool), k=1)
+
+        z_display = corr_ord.values.astype(float).copy()
+        z_display[upper_mask] = np.nan
+
+        text_vals = None
+        if n <= 30:
+            text_arr = np.full((n, n), '', dtype=object)
+            for i in range(n):
+                for j in range(i + 1):
+                    v = corr_ord.values[i, j]
+                    if not np.isnan(v):
+                        text_arr[i, j] = f'{v:.2f}'
+            text_vals = text_arr.tolist()
+
+        fig = go.Figure(go.Heatmap(
+            z=z_display,
+            x=corr_ord.columns.tolist(),
+            y=corr_ord.index.tolist(),
+            colorscale='RdBu_r',
+            zmin=-1, zmax=1,
+            text=text_vals,
+            texttemplate='%{text}' if text_vals is not None else None,
+            hovertemplate='%{x} × %{y}: %{z:.3f}<extra></extra>',
+            colorbar=dict(title='r'),
+        ))
+        fig.update_layout(
+            title=f'Sample Correlation Matrix ({method.capitalize()})',
+            height=max(500, n * 28),
+            xaxis_tickangle=-45,
+            xaxis_tickfont=dict(size=max(8, 14 - n // 5)),
+            yaxis_tickfont=dict(size=max(8, 14 - n // 5)),
+            template=kwargs.get('template', 'plotly_white'),
+        )
+        return fig
+
+    def plot_cv_vs_intensity(self, **kwargs):
+        """Protein-level CV% vs mean intensity scatter — helps choose intensity filters."""
+        logger.info("Generating CV vs intensity scatter...")
+
+        numeric_df = self.protein_df[self.sample_cols].copy()
+        numeric_df.replace(0, np.nan, inplace=True)
+
+        mean_int = numeric_df.mean(axis=1, skipna=True)
+        std_int = numeric_df.std(axis=1, skipna=True)
+
+        plot_df = pd.DataFrame({
+            self.protein_col: self.protein_df[self.protein_col],
+            'mean_intensity': mean_int,
+            'CV_pct': std_int / mean_int * 100,
+        }).dropna(subset=['mean_intensity', 'CV_pct'])
+        plot_df = plot_df[plot_df['mean_intensity'] > 0].copy()
+        plot_df['log2_mean_intensity'] = np.log2(plot_df['mean_intensity'])
+
+        hover_cols = [self.protein_col]
+        if 'Gene Name' in self.protein_df.columns:
+            plot_df['Gene Name'] = self.protein_df.loc[plot_df.index, 'Gene Name'].values
+            hover_cols.append('Gene Name')
+
+        fig = px.scatter(
+            plot_df,
+            x='log2_mean_intensity',
+            y='CV_pct',
+            hover_data=hover_cols,
+            title='Protein CV (%) vs Mean Intensity',
+            labels={'log2_mean_intensity': 'log2(Mean Intensity)', 'CV_pct': 'CV (%)'},
+            opacity=0.55,
+            template=kwargs.get('template', 'plotly_white'),
+        )
+        fig.update_traces(marker=dict(size=5, color='#4e79a7'))
+        fig.update_layout(height=500)
+        return fig
