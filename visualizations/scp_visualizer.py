@@ -162,13 +162,14 @@ class SCPVisualizer:
             used_samples = direct_match
             anno_index_col = self.sample_col
         else:
-            base_map = {
-                os.path.splitext(os.path.basename(c))[0]: c for c in matrix_samples
-            }
+            def _stem(p):
+                return os.path.splitext(os.path.basename(str(p).replace("\\", "/")))[0]
+
+            base_map = {_stem(c): c for c in matrix_samples}
             matched_matrix_cols = []
             matched_anno_rows = []
             for s in anno_samples:
-                s_base = os.path.splitext(os.path.basename(s))[0]
+                s_base = _stem(s)
                 if s_base in base_map:
                     matched_matrix_cols.append(base_map[s_base])
                     matched_anno_rows.append(s)
@@ -179,7 +180,7 @@ class SCPVisualizer:
                 )
             # Build a mapping from original annotation value → matrix column name
             self._annotation_raw["_matrix_col"] = self._annotation_raw[self.sample_col].apply(
-                lambda s: base_map.get(os.path.splitext(os.path.basename(s))[0], np.nan)
+                lambda s: base_map.get(_stem(s), np.nan)
             )
             used_samples = self._annotation_raw["_matrix_col"].dropna().tolist()
             anno_index_col = "_matrix_col"
@@ -218,10 +219,10 @@ class SCPVisualizer:
 
         stats = self._stats_raw.copy()
         stats["_base"] = stats[self.run_col].apply(
-            lambda x: os.path.splitext(os.path.basename(str(x)))[0]
+            lambda x: os.path.splitext(os.path.basename(str(x).replace("\\", "/")))[0]
         )
         adata_bases = pd.Series(
-            [os.path.splitext(os.path.basename(str(s)))[0] for s in adata.obs.index],
+            [os.path.splitext(os.path.basename(str(s).replace("\\", "/")))[0] for s in adata.obs.index],
             index=adata.obs.index,
         )
         stats_idx = stats.set_index("_base")
