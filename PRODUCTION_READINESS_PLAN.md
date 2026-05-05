@@ -8,7 +8,7 @@
 
 ## 🟡 Current Working State (last updated 2026-05-04 by Sonnet 4.6)
 
-**Active branch:** `feature/p4-dilution` (next). P0 ☑ P1 ☑ P2 ☑ P3 ☑ all merged. Cut `feature/p4-dilution` from develop.
+**Active branch:** `feature/p4-dilution` — implementation complete, pending PR/merge/tag.
 
 ### Phase completion summary
 
@@ -18,7 +18,7 @@
 | P1 — Report Builder | ☑ Done | PR #2 merged → develop; `v2.0.0-p1` tagged | `feature/p1-report-builder` |
 | P2 — Comparative | ☑ Done | PR #3 merged → develop; `v2.0.0-p2` tagged | `feature/p2-comparative` |
 | P3 — Quantification | ☑ Done | PR #4 merged → develop; `v2.0.0-p3` tagged | `feature/p3-quant` |
-| P4 — Dilution Series | ☐ Next | — | `feature/p4-dilution` |
+| P4 — Dilution Series | ⏳ Implemented | PR open → develop; pending merge + `v2.0.0-p4` tag | `feature/p4-dilution` |
 
 ### What's done in P2 (Comparative module upgrade)
 
@@ -40,22 +40,21 @@
 - ✅ **All PlotManager instances have `.module = "quant"`** — "Add to Report" routes correctly.
 - ✅ **Gene symbol coverage banner** — `sanity.gene_resolution_report` / `render_validation` wired at top of dashboard.
 
-### What's next — P4 (Dilution module)
+### What's done in P4 (Dilution module)
 
-Scope defined in §3.2. Cut `feature/p4-dilution` from develop. Critical files:
-- `modules/dilution_module.py`
-- `visualizations/dilution_series.py`
+- ✅ **Configurable column names** — `sample_col`, `concentration_col`, `replicate_col`, `group_col` params added to `DilutionSeriesVisualizer.__init__`; metadata normalized to internal names at init so all downstream code is unchanged. UI text inputs in `_upload_data_section` under "Column Configuration" expander.
+- ✅ **`DEVIATION_BUCKETS` configurable** — two sliders (`good_thresh`, `warn_thresh`) in "Global Plot Settings" expander; passed through to `plot_relative_abundance_ratios` and `_classify_deviation_color`.
+- ✅ **CSV exports** — per-protein R² table (`get_r2_table()`), CV-by-concentration matrix (`get_cv_by_concentration_matrix()`), completeness summary (`get_completeness_summary()`) — all downloadable from their respective tabs.
+- ✅ **R² histogram + ranked R² table** — new "📉 Linearity (R²)" tab with `plot_r2_histogram()`, median R² caption, sortable table, and CSV download.
+- ✅ **LOD/LOQ plot + table** — new "🔬 LOD/LOQ" tab with `plot_lod_loq()` (scatter LOD vs R²), `get_lod_loq_table()` (slope-based: LOD = 2^(log₂C_min + 3.3σ/slope)), sortable table with in-range indicator, CSV download.
+- ✅ **Sanity checks** — `run_sanity_checks()` checks for non-positive concentrations, duplicate replicate-concentration pairs, uneven geometric ratios, and negative-slope proteins; displayed in collapsible banner at top of dashboard.
+- ✅ **ReportBuilder wired** — `.module = "dilution"` set on all 10 `PlotManager` instances.
 
-Deliverables:
-1. Surface `DEVIATION_BUCKETS` as user-configurable sliders (currently hardcoded).
-2. Make `Concentration`/`Replicate`/`Group` column names configurable via text inputs.
-3. Add CSV export for per-protein R² table, CV-by-concentration matrix, completeness summary.
-4. Add R² histogram + ranked R² table.
-5. **New plot**: LOD/LOQ estimation per protein (CCβ / 3.3·σ/slope) with sortable summary table.
-6. **New sanity check**: warn on non-monotonic `Concentration` per replicate; warn on negative linear fit slope.
-7. Wire all plots into ReportBuilder (`.module = "dilution"` on all PlotManagers).
+### What's next — P5 (QC module)
 
-Smoke-test checklist:
+Cut `feature/p5-qc` from develop after P4 merges. Scope defined in §3.1.
+
+Smoke-test checklist (P4):
 - Upload dilution fixture from demo data folder → generate all existing plots → confirm new LOD/LOQ tab renders → adjust deviation sliders → add to report → export HTML + ZIP.
 
 ### Environment notes (critical for resumption)
