@@ -8,7 +8,7 @@
 
 ## 🟡 Current Working State (last updated 2026-05-04 by Sonnet 4.6)
 
-**Active branch:** `feature/p3-quant`. P0 ☑ P1 ☑ P2 ☑ all merged. P3 implementation complete on branch — needs smoke test, PR, merge, and tag.
+**Active branch:** `feature/p4-dilution` (next). P0 ☑ P1 ☑ P2 ☑ P3 ☑ all merged. Cut `feature/p4-dilution` from develop.
 
 ### Phase completion summary
 
@@ -17,7 +17,8 @@
 | P0 — Foundation | ☑ Done | PR #1 merged → develop; `v2.0.0-p0` tagged | `feature/p0-foundation` |
 | P1 — Report Builder | ☑ Done | PR #2 merged → develop; `v2.0.0-p1` tagged | `feature/p1-report-builder` |
 | P2 — Comparative | ☑ Done | PR #3 merged → develop; `v2.0.0-p2` tagged | `feature/p2-comparative` |
-| P3 — Quantification | ⏳ In progress | — | `feature/p3-quant` |
+| P3 — Quantification | ☑ Done | PR #4 merged → develop; `v2.0.0-p3` tagged | `feature/p3-quant` |
+| P4 — Dilution Series | ☐ Next | — | `feature/p4-dilution` |
 
 ### What's done in P2 (Comparative module upgrade)
 
@@ -40,6 +41,22 @@
 - ✅ **Gene symbol coverage banner** — `sanity.gene_resolution_report` / `render_validation` wired at top of dashboard.
 
 ### What's next — P4 (Dilution module)
+
+Scope defined in §3.2. Cut `feature/p4-dilution` from develop. Critical files:
+- `modules/dilution_module.py`
+- `visualizations/dilution_series.py`
+
+Deliverables:
+1. Surface `DEVIATION_BUCKETS` as user-configurable sliders (currently hardcoded).
+2. Make `Concentration`/`Replicate`/`Group` column names configurable via text inputs.
+3. Add CSV export for per-protein R² table, CV-by-concentration matrix, completeness summary.
+4. Add R² histogram + ranked R² table.
+5. **New plot**: LOD/LOQ estimation per protein (CCβ / 3.3·σ/slope) with sortable summary table.
+6. **New sanity check**: warn on non-monotonic `Concentration` per replicate; warn on negative linear fit slope.
+7. Wire all plots into ReportBuilder (`.module = "dilution"` on all PlotManagers).
+
+Smoke-test checklist:
+- Upload dilution fixture from demo data folder → generate all existing plots → confirm new LOD/LOQ tab renders → adjust deviation sliders → add to report → export HTML + ZIP.
 
 ### Environment notes (critical for resumption)
 
