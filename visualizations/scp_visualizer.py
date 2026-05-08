@@ -1213,6 +1213,10 @@ class SCPVisualizer:
         n_top: int = 25,
         pval_thresh: float = 0.05,
         fc_thresh: float = 0.5,
+        title: str = "",
+        figsize: tuple = None,
+        dpi: int = 150,
+        **kwargs,
     ) -> BytesIO:
         """Static seaborn clustermap of top DE proteins."""
         sig = de_df[
@@ -1235,15 +1239,17 @@ class SCPVisualizer:
             palette = sns.color_palette("tab10", len(uniq))
             col_colors = groups.map(dict(zip(uniq, palette)))
 
+        plot_figsize = figsize if figsize else (12, max(8, len(heat_df) * 0.22))
         g = sns.clustermap(
             heat_df, method="ward", cmap="RdBu_r", z_score=0, center=0,
             col_colors=col_colors.to_frame() if col_colors is not None else None,
             yticklabels=(len(heat_df) <= 50),
-            figsize=(12, max(8, len(heat_df) * 0.22)),
+            figsize=plot_figsize,
         )
-        g.fig.suptitle(f"Top DE Proteins (n={len(top_proteins)})", y=1.02)
+        heading = title if title else f"Top DE Proteins (n={len(top_proteins)})"
+        g.fig.suptitle(heading, y=1.02)
         buf = BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=dpi)
         buf.seek(0)
         plt.close(g.fig)
         return buf
@@ -1251,6 +1257,37 @@ class SCPVisualizer:
     # ─────────────────────────────────────────────────────────────────────────
     # ACTIVITY SCORE PLOTS
     # ─────────────────────────────────────────────────────────────────────────
+
+    def plot_expression_umap(self, protein: str, **kwargs) -> go.Figure:
+        """UMAP coloured by a single protein's log-normalised expression."""
+        if not self.pp_state["umap_computed"]:
+            raise ValueError("Run run_umap() first.")
+        if protein not in self.adata.var_names:
+            raise ValueError(f"Protein '{protein}' not found in the dataset.")
+
+        layer_key = "log1p" if "log1p" in self.adata.layers else None
+        X = _to_dense(self.adata.layers[layer_key] if layer_key else self.adata.X)
+        prot_idx = list(self.adata.var_names).index(protein)
+        expr_vals = X[:, prot_idx]
+
+        df, cols = self._embedding_df("umap")
+        df["_expr"] = expr_vals
+
+        fig = px.scatter(
+            df, x=cols[0], y=cols[1], color="_expr",
+            hover_name="Cell", opacity=0.8,
+            color_continuous_scale="Viridis",
+            title=f"UMAP — {protein} expression",
+            labels={"_expr": "log(norm. intensity)"},
+            template=kwargs.get("template", "plotly_white"),
+        )
+        fig.update_traces(marker=dict(size=6))
+        fig.update_layout(height=600)
+        return fig
+
+    def get_protein_names(self) -> list:
+        """Return sorted list of protein names for selection UI."""
+        return sorted(self.adata.var_names.tolist())
 
     def plot_activity_umap(self, score_col: str, **kwargs) -> go.Figure:
         """UMAP coloured by a per-cell activity score (continuous colourscale)."""

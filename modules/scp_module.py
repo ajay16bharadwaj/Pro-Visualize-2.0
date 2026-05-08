@@ -16,6 +16,8 @@ Tab layout:
                          per-score summary stats
 """
 
+import io
+import pickle
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -25,7 +27,7 @@ from plotly import colors as pc
 
 from visualizations.scp_visualizer import SCPVisualizer
 from utils.helpers import handle_plotting_errors
-from utils.plot_manager import PlotManager
+from utils.plot_manager import PlotManager, MplPlotManager
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,20 @@ def _state(key: str, default=None):
     return st.session_state[key]
 
 
+def _pm(plot_key: str) -> PlotManager:
+    """Create a PlotManager pre-stamped with the SCP module tag."""
+    pm = PlotManager(plot_key)
+    pm.module = "scp"
+    return pm
+
+
+def _mpl_pm(plot_key: str) -> MplPlotManager:
+    """Create an MplPlotManager pre-stamped with the SCP module tag."""
+    pm = MplPlotManager(plot_key)
+    pm.module = "scp"
+    return pm
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main class
 # ─────────────────────────────────────────────────────────────────────────────
@@ -62,7 +78,8 @@ class SCPTab:
         "scp_qc_overview", "scp_det_hist", "scp_qc_scatter",
         "scp_stats_metric", "scp_lib_size", "scp_cov_heatmap",
         "scp_pca", "scp_elbow", "scp_umap", "scp_cluster_comp",
-        "scp_volcano", "scp_activity_umap", "scp_activity_violin",
+        "scp_expr_umap", "scp_volcano", "scp_de_heatmap",
+        "scp_activity_umap", "scp_activity_violin",
     ]
 
     def __init__(self):
@@ -298,14 +315,14 @@ class SCPTab:
         ])
 
         with qc_overview_tab:
-            pm = PlotManager("scp_qc_overview")
+            pm = _pm("scp_qc_overview")
             pm.render_generate_button(
                 viz.plot_qc_overview, color_by=color_by, **global_kwargs
             )
             pm.render_plot_and_editor()
 
         with det_hist_tab:
-            pm = PlotManager("scp_det_hist")
+            pm = _pm("scp_det_hist")
             pm.render_generate_button(
                 viz.plot_protein_detection_histogram, **global_kwargs
             )
@@ -323,7 +340,7 @@ class SCPTab:
             y_col = c2.selectbox("Y axis", num_cols,
                                   index=num_cols.index("total_intensity") if "total_intensity" in num_cols else min(1, len(num_cols)-1),
                                   key="scp_scatter_y")
-            pm = PlotManager("scp_qc_scatter")
+            pm = _pm("scp_qc_scatter")
             pm.render_generate_button(
                 viz.plot_n_proteins_scatter,
                 x_col=x_col, y_col=y_col, color_col=color_by,
@@ -339,7 +356,7 @@ class SCPTab:
                 metric = st.selectbox(
                     "DIA-NN Stats Metric", diann_cols, key="scp_stats_metric_sel"
                 )
-                pm = PlotManager("scp_stats_metric")
+                pm = _pm("scp_stats_metric")
                 pm.render_generate_button(
                     viz.plot_stats_metric, metric=metric, groupby=color_by,
                     **global_kwargs
@@ -499,10 +516,50 @@ class SCPTab:
             st.info("Run preprocessing to see visualisations.")
             return
 
+        # -- Session save / load -----------------------------------------------
+        with st.expander("💾 Save / Load Session", expanded=False):
+            st.caption(
+                "Save the full analysis state (AnnData + all preprocessing steps) "
+                "to a file. Load it in a future session to resume from where you left off."
+            )
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                try:
+                    session_bytes = pickle.dumps(viz)
+                    sc1.download_button(
+                        "⬇ Download session (.pkl)",
+                        data=session_bytes,
+                        file_name="scp_session.pkl",
+                        mime="application/octet-stream",
+                        key="scp_save_session",
+                        use_container_width=True,
+                    )
+                except Exception as e:
+                    sc1.error(f"Could not serialize session: {e}")
+            with sc2:
+                uploaded_session = sc2.file_uploader(
+                    "Load session (.pkl)", type=["pkl"], key="scp_load_session_file",
+                    label_visibility="collapsed",
+                )
+                if uploaded_session is not None:
+                    if sc2.button("Restore session", use_container_width=True, key="scp_restore_btn"):
+                        try:
+                            restored = pickle.loads(uploaded_session.read())
+                            if not isinstance(restored, type(viz)):
+                                st.error("File does not contain a valid SCP session.")
+                            else:
+                                st.session_state.scp_visualizer = restored
+                                for k in self.PLOT_KEYS:
+                                    st.session_state.pop(f"{k}_fig", None)
+                                st.success("Session restored. Reload the tab to reflect the loaded state.")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to restore session: {e}")
+
         lib_tab, corr_tab = st.tabs(["📏 Library Sizes", "🔗 Covariate Correlations"])
 
         with lib_tab:
-            pm = PlotManager("scp_lib_size")
+            pm = _pm("scp_lib_size")
             pm.render_generate_button(viz.plot_library_size_comparison, **global_kwargs)
             pm.render_plot_and_editor()
 
@@ -510,7 +567,7 @@ class SCPTab:
             if not state["pca_computed"]:
                 st.info("Run PCA first to see covariate correlations.")
             else:
-                pm = PlotManager("scp_cov_heatmap")
+                pm = _pm("scp_cov_heatmap")
                 pm.render_generate_button(
                     viz.plot_covariate_correlation_heatmap, **global_kwargs
                 )
@@ -572,17 +629,17 @@ class SCPTab:
             "Colour embedding by:", groupby_cols, key="scp_embed_color"
         ) if groupby_cols else None
 
-        elbow_tab, pca_tab, umap_tab, cluster_tab = st.tabs([
-            "📉 Elbow Plot", "🔵 PCA", "🌐 UMAP", "🗂 Cluster Composition"
+        elbow_tab, pca_tab, umap_tab, expr_tab, cluster_tab = st.tabs([
+            "📉 Elbow Plot", "🔵 PCA", "🌐 UMAP", "🎨 Expression Overlay", "🗂 Cluster Composition"
         ])
 
         with elbow_tab:
-            pm = PlotManager("scp_elbow")
+            pm = _pm("scp_elbow")
             pm.render_generate_button(viz.plot_elbow, **global_kwargs)
             pm.render_plot_and_editor()
 
         with pca_tab:
-            pm = PlotManager("scp_pca")
+            pm = _pm("scp_pca")
             pm.render_generate_button(viz.plot_pca, color_by=color_by, **global_kwargs)
             pm.render_plot_and_editor()
 
@@ -590,8 +647,22 @@ class SCPTab:
             if not viz.pp_state["umap_computed"]:
                 st.info("Run embedding above to generate UMAP.")
             else:
-                pm = PlotManager("scp_umap")
+                pm = _pm("scp_umap")
                 pm.render_generate_button(viz.plot_umap, color_by=color_by, **global_kwargs)
+                pm.render_plot_and_editor()
+
+        with expr_tab:
+            if not viz.pp_state["umap_computed"]:
+                st.info("Run embedding above to generate UMAP first.")
+            else:
+                all_proteins = viz.get_protein_names()
+                sel_protein = st.selectbox(
+                    "Select protein to overlay:", all_proteins, key="scp_expr_protein"
+                )
+                pm = _pm("scp_expr_umap")
+                pm.render_generate_button(
+                    viz.plot_expression_umap, protein=sel_protein, **global_kwargs
+                )
                 pm.render_plot_and_editor()
 
         with cluster_tab:
@@ -605,7 +676,7 @@ class SCPTab:
                 splitby = c2.selectbox(
                     "Split by:", ["None"] + groupby_cols, key="scp_comp_splitby"
                 )
-                pm = PlotManager("scp_cluster_comp")
+                pm = _pm("scp_cluster_comp")
                 pm.render_generate_button(
                     viz.plot_cluster_composition,
                     groupby=groupby_for_comp,
@@ -710,7 +781,7 @@ class SCPTab:
 
         with volcano_tab:
             n_label = st.slider("Max protein labels", 3, 25, 10, key="scp_n_label")
-            pm = PlotManager("scp_volcano")
+            pm = _pm("scp_volcano")
             pm.render_generate_button(
                 viz.plot_volcano_sc, de_df=de_df,
                 title=f"Volcano — {sel_group} vs {de_df['reference'].iloc[0]}",
@@ -753,17 +824,16 @@ class SCPTab:
             else:
                 heat_groupby = None
 
-            if st.button("Generate Heatmap", use_container_width=True, key="scp_gen_heat"):
-                try:
-                    with st.spinner("Generating heatmap…"):
-                        buf = viz.plot_de_heatmap(
-                            de_df, groupby=heat_groupby or de_groupby,
-                            n_top=n_top_heat,
-                            pval_thresh=pval_thresh, fc_thresh=fc_thresh
-                        )
-                    st.image(buf, caption=f"Top DE Proteins — {sel_group}")
-                except Exception as e:
-                    st.error(f"Heatmap failed: {e}")
+            pm_heat = _mpl_pm("scp_de_heatmap")
+            pm_heat.render_generate_button(
+                viz.plot_de_heatmap,
+                de_df=de_df,
+                groupby=heat_groupby or de_groupby,
+                n_top=n_top_heat,
+                pval_thresh=pval_thresh,
+                fc_thresh=fc_thresh,
+            )
+            pm_heat.render_plot_and_editor()
 
     # ─────────────────────────────────────────────────────────────────────────
     # TAB 5 — ACTIVITY SCORING
@@ -998,7 +1068,7 @@ class SCPTab:
             if not viz.pp_state["umap_computed"]:
                 st.info("Run UMAP (in the Embedding tab) first.")
             else:
-                pm = PlotManager("scp_activity_umap")
+                pm = _pm("scp_activity_umap")
                 pm.render_generate_button(
                     viz.plot_activity_umap, score_col=score_col, **global_kwargs
                 )
@@ -1008,7 +1078,7 @@ class SCPTab:
             if not groupby_for_plots:
                 st.info("No grouping columns available.")
             else:
-                pm = PlotManager("scp_activity_violin")
+                pm = _pm("scp_activity_violin")
                 pm.render_generate_button(
                     viz.plot_activity_violin,
                     score_col=score_col,
