@@ -6,9 +6,9 @@
 
 ---
 
-## 🟡 Current Working State (last updated 2026-05-04 by Sonnet 4.6)
+## 🟡 Current Working State (last updated 2026-05-08 by Sonnet 4.6)
 
-**Active branch:** `feature/p4-dilution` — implementation complete, pending PR/merge/tag.
+**Active branch:** `develop` — P6 merged and tagged. Next: cut `feature/p7-deploy-ready`.
 
 ### Phase completion summary
 
@@ -18,7 +18,9 @@
 | P1 — Report Builder | ☑ Done | PR #2 merged → develop; `v2.0.0-p1` tagged | `feature/p1-report-builder` |
 | P2 — Comparative | ☑ Done | PR #3 merged → develop; `v2.0.0-p2` tagged | `feature/p2-comparative` |
 | P3 — Quantification | ☑ Done | PR #4 merged → develop; `v2.0.0-p3` tagged | `feature/p3-quant` |
-| P4 — Dilution Series | ⏳ Implemented | PR open → develop; pending merge + `v2.0.0-p4` tag | `feature/p4-dilution` |
+| P4 — Dilution Series | ☑ Done | PR #5 merged → develop; `v2.0.0-p4` tagged | `feature/p4-dilution` |
+| P5 — QC (DIA) | ☑ Done | PR #6 merged → main (sync'd to develop); `v2.0.0-p5` tagged | `feature/p5-qc` |
+| P6 — SCP Polish | ☑ Done | PR #7 merged → develop; `v2.0.0-p6` tagged | `feature/p6-scp-polish` |
 
 ### What's done in P2 (Comparative module upgrade)
 
@@ -50,12 +52,29 @@
 - ✅ **Sanity checks** — `run_sanity_checks()` checks for non-positive concentrations, duplicate replicate-concentration pairs, uneven geometric ratios, and negative-slope proteins; displayed in collapsible banner at top of dashboard.
 - ✅ **ReportBuilder wired** — `.module = "dilution"` set on all 10 `PlotManager` instances.
 
-### What's next — P5 (QC module)
+### What's done in P5 (DIA QC module)
 
-Cut `feature/p5-qc` from develop after P4 merges. Scope defined in §3.1.
+- ✅ **PlotManager wired into all 10 DIA QC plots** — IM control/drift, RT control/drift/pred-error/peak-width/elution, mass-accuracy dist/sentinel/trend. All have PNG/SVG/HTML export + "Add to Report".
+- ✅ **`.module = "dia_qc"`** on every PlotManager — Report tab correctly categorises DIA QC figures.
+- ✅ **Configurable σ-threshold slider** (1–3σ, default 2) in IM and RT control chart tabs; orange dotted ±Nσ warning lines drawn at the chosen threshold.
+- ✅ **`QC_THRESHOLDS` and `DIA_RUN_NAME_PATTERNS` imported from `config/plot_configs`** — config-driven defaults, no hardcoded values in `DiaQcVisualizer`.
+- ✅ **SCP bonus fix** — Windows backslash paths in `scp_visualizer.py` normalised before `os.path.basename()`, fixing annotation↔PG-matrix matching for DIA-NN files from Windows.
 
-Smoke-test checklist (P4):
-- Upload dilution fixture from demo data folder → generate all existing plots → confirm new LOD/LOQ tab renders → adjust deviation sliders → add to report → export HTML + ZIP.
+### What's done in P6 (SCP module polish)
+
+- ✅ **`_pm()` / `_mpl_pm()` helpers** — all 14+ SCP PlotManagers pre-stamped with `.module = "scp"`; every SCP figure now routes to the Report tab.
+- ✅ **DE heatmap → `MplPlotManager`** — migrated from bare `st.image()`. Gains title editing, DPI, PNG download, "Add to Report". `plot_de_heatmap()` accepts `title`/`figsize`/`dpi` kwargs.
+- ✅ **Session save / load** — "💾 Save / Load Session" expander in Preprocessing tab. Serialises full `SCPVisualizer` (AnnData + `pp_state`) via pickle. Scientists can resume analysis across sessions.
+- ✅ **Expression Overlay UMAP** — new "🎨 Expression Overlay" tab in Embedding. Select any protein from a dropdown; UMAP coloured by log-normalised expression (Viridis). `plot_expression_umap()` + `get_protein_names()` added to `SCPVisualizer`.
+- ✅ **`scp_expr_umap` and `scp_de_heatmap`** added to `PLOT_KEYS` so cached figures clear on pipeline resets.
+
+### What's next — P7 (Deploy-Ready)
+
+Cut `feature/p7-deploy-ready` from develop. Scope defined in §E (Deployment Hygiene):
+- `Dockerfile`, `docker-compose.yml`, `.streamlit/config.toml`, `.dockerignore`, `Makefile`
+- `tests/` with at least one smoke test per visualizer
+- Welcome page rebuilt with quick-start cards and sample fixtures
+- Merge develop → main for release tag `v2.0.0`
 
 ### Environment notes (critical for resumption)
 
