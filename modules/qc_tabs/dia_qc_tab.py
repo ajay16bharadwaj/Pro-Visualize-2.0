@@ -4,6 +4,7 @@ from tempfile import NamedTemporaryFile
 from visualizations.DiaQcVisualizer import DiaQcVisualizer
 from utils.helpers import handle_plotting_errors
 from utils.caching import load_dia_visualizer
+from utils.plot_manager import PlotManager
 
 
 # Set up a logger for this module
@@ -181,53 +182,60 @@ class DiaQcTab:
         visualizer = st.session_state.dia_qc_visualizer
         q_value = st.session_state.get('q_value_cutoff', 0.01)
 
-        # Create tabs for each plot
         control_tab, drift_tab = st.tabs([
-            "📈 IM Control Chart", 
+            "📈 IM Control Chart",
             "💨 IM Drift"
         ])
 
         with control_tab:
             st.markdown("Monitor the ion mobility of a single peptide over time. This helps identify instrument shifts or calibration issues.")
-            
+
             selected_peptide = st.selectbox(
                 "Select a Sentinel Peptide to Monitor:",
                 options=st.session_state.sentinel_peptides,
-                key="im_control_peptide_select" # Use a unique key
+                key="im_control_peptide_select"
             )
-            
+            sigma = st.slider(
+                "Warning σ-threshold", min_value=1.0, max_value=3.0, value=2.0, step=0.5,
+                key="im_control_sigma",
+                help="Dotted orange lines are drawn at ±this many standard deviations from the mean."
+            )
+
             if selected_peptide:
-                try:
-                    fig = visualizer.plot_control_chart(
-                        peptide_id=selected_peptide,
-                        metric_col='IM',
-                        y_axis_title='Ion Mobility (1/K0)',
-                        q_value_cutoff=q_value
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                except (ValueError, KeyError) as e:
-                    st.error(f"Could not generate IM control chart: {e}")
+                manager = PlotManager("dia_im_control")
+                manager.module = "dia_qc"
+                manager.render_generate_button(
+                    visualizer.plot_control_chart,
+                    peptide_id=selected_peptide,
+                    metric_col='IM',
+                    y_axis_title='Ion Mobility (1/K0)',
+                    q_value_cutoff=q_value,
+                    sigma_threshold=sigma,
+                )
+                manager.render_plot_and_editor()
 
         with drift_tab:
             st.markdown("Visualize the ion mobility deviation for multiple sentinel peptides simultaneously.")
-            
+
             num_peptides_to_plot = st.slider(
                 "Number of Peptides to Display",
                 min_value=1,
                 max_value=len(st.session_state.sentinel_peptides),
                 value=min(5, len(st.session_state.sentinel_peptides)),
                 step=1,
-                key="im_drift_slider", # Use a unique key
+                key="im_drift_slider",
                 help="Select how many of the top sentinel peptides to show in the plot."
             )
-            
-            peptides_to_plot = st.session_state.sentinel_peptides[:num_peptides_to_plot]
 
-            try:
-                fig = visualizer.plot_im_drift(peptides_to_plot, q_value)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate IM drift plot: {e}")
+            peptides_to_plot = st.session_state.sentinel_peptides[:num_peptides_to_plot]
+            manager = PlotManager("dia_im_drift")
+            manager.module = "dia_qc"
+            manager.render_generate_button(
+                visualizer.plot_im_drift,
+                sentinel_peptides=peptides_to_plot,
+                q_value_cutoff=q_value,
+            )
+            manager.render_plot_and_editor()
 
     @handle_plotting_errors
     def _rt_qc_tab(self):
@@ -239,96 +247,107 @@ class DiaQcTab:
         visualizer = st.session_state.dia_qc_visualizer
         q_value = st.session_state.get('q_value_cutoff', 0.01)
 
-        # Add a new tab for the elution plot
         control_tab, drift_tab, error_tab, peak_width_tab, elution_tab = st.tabs([
-            "📈 RT Control Chart", 
-            "💨 RT Drift", 
-            "📉 RT Prediction Error", 
+            "📈 RT Control Chart",
+            "💨 RT Drift",
+            "📉 RT Prediction Error",
             "📊 Peak Width",
-            "⏳ Peptide Elution" 
+            "⏳ Peptide Elution"
         ])
 
-        # --- Tab 1: Control Chart ---
         with control_tab:
             st.markdown("Monitor the retention time of a single peptide over time. This Levey-Jennings plot helps identify shifts or increased variability.")
-            
+
             selected_peptide = st.selectbox(
                 "Select a Sentinel Peptide to Monitor:",
-                options=st.session_state.sentinel_peptides
+                options=st.session_state.sentinel_peptides,
+                key="rt_control_peptide_select"
             )
-            
-            if selected_peptide:
-                try:
-                    fig = visualizer.plot_control_chart(
-                        peptide_id=selected_peptide, metric_col='RT',
-                        y_axis_title='Retention Time (min)', q_value_cutoff=q_value
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                except (ValueError, KeyError) as e:
-                    st.error(f"Could not generate control chart: {e}")
+            sigma = st.slider(
+                "Warning σ-threshold", min_value=1.0, max_value=3.0, value=2.0, step=0.5,
+                key="rt_control_sigma",
+                help="Dotted orange lines are drawn at ±this many standard deviations from the mean."
+            )
 
-        # --- Tab 2: RT Drift ---
+            if selected_peptide:
+                manager = PlotManager("dia_rt_control")
+                manager.module = "dia_qc"
+                manager.render_generate_button(
+                    visualizer.plot_control_chart,
+                    peptide_id=selected_peptide,
+                    metric_col='RT',
+                    y_axis_title='Retention Time (min)',
+                    q_value_cutoff=q_value,
+                    sigma_threshold=sigma,
+                )
+                manager.render_plot_and_editor()
+
         with drift_tab:
             st.markdown("Visualize the retention time deviation for multiple sentinel peptides simultaneously. This helps confirm if RT shifts are systematic.")
-            
-            # --- NEW SLIDER ---
+
             num_peptides_to_plot = st.slider(
                 "Number of Peptides to Display",
                 min_value=1,
                 max_value=len(st.session_state.sentinel_peptides),
-                value=min(5, len(st.session_state.sentinel_peptides)), # Default to 5 or max available
+                value=min(5, len(st.session_state.sentinel_peptides)),
                 step=1,
                 help="Select how many of the top sentinel peptides to show in the plot."
             )
-            
-            # Slice the list of peptides based on the slider's value
             peptides_to_plot = st.session_state.sentinel_peptides[:num_peptides_to_plot]
 
-            try:
-                fig = visualizer.plot_rt_drift(peptides_to_plot, q_value)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate RT drift plot: {e}")
-                
-        # --- Tab 3: RT Prediction Error ---
+            manager = PlotManager("dia_rt_drift")
+            manager.module = "dia_qc"
+            manager.render_generate_button(
+                visualizer.plot_rt_drift,
+                sentinel_peptides=peptides_to_plot,
+                q_value_cutoff=q_value,
+            )
+            manager.render_plot_and_editor()
+
         with error_tab:
             st.markdown("Track how well the observed retention time matches the predicted RT. A consistent, low error is desirable.")
-            
+
             moving_avg_window = st.slider(
                 "Moving Average Window", min_value=1, max_value=21, value=5, step=2,
                 help="Smooths the error trend over a window of N runs."
             )
-            
-            try:
-                fig = visualizer.plot_rt_prediction_error(q_value, moving_avg_window)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate RT prediction error plot: {e}")
-                
-        # --- Tab 4: Peak Width Distribution ---
+
+            manager = PlotManager("dia_rt_pred_error")
+            manager.module = "dia_qc"
+            manager.render_generate_button(
+                visualizer.plot_rt_prediction_error,
+                q_value_cutoff=q_value,
+                moving_avg_window=moving_avg_window,
+            )
+            manager.render_plot_and_editor()
+
         with peak_width_tab:
             st.markdown("Assess chromatographic performance by visualizing the distribution of Full Width at Half Maximum (FWHM) for all high-confidence peptides on each day.")
-            try:
-                fig = visualizer.plot_peak_width_distribution(q_value)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate peak width plot: {e}")
-        
+
+            manager = PlotManager("dia_peak_width")
+            manager.module = "dia_qc"
+            manager.render_generate_button(
+                visualizer.plot_peak_width_distribution,
+                q_value_cutoff=q_value,
+            )
+            manager.render_plot_and_editor()
+
         with elution_tab:
             st.markdown("Visualize how evenly the unique identified peptides are distributed across the entire retention time gradient.")
-            
-            # Interactive widget for histogram granularity
+
             num_bins = st.slider(
-                "Number of Bins",
-                min_value=25, max_value=250, value=150, step=25,
+                "Number of Bins", min_value=25, max_value=250, value=150, step=25,
                 help="Adjust the number of bins to make the distribution plot broader or more granular."
             )
-            
-            try:
-                fig = visualizer.plot_peptide_elution_distribution(q_value, num_bins)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate peptide elution plot: {e}")
+
+            manager = PlotManager("dia_elution")
+            manager.module = "dia_qc"
+            manager.render_generate_button(
+                visualizer.plot_peptide_elution_distribution,
+                q_value_cutoff=q_value,
+                num_bins=num_bins,
+            )
+            manager.render_plot_and_editor()
 
     @handle_plotting_errors
     def _mass_accuracy_qc_tab(self):
@@ -341,29 +360,32 @@ class DiaQcTab:
         q_value = st.session_state.get('q_value_cutoff', 0.01)
 
         dist_tab, sentinel_tab, trend_tab = st.tabs([
-            "📊 Mass Error Distribution", 
-            "📈 Sentinel Mass Accuracy", 
+            "📊 Mass Error Distribution",
+            "📈 Sentinel Mass Accuracy",
             "📉 Mass Error Trend"
         ])
 
         with dist_tab:
             st.markdown("Assess the overall mass accuracy by visualizing the distribution of mass error (in ppm) for all high-confidence peptides on each day.")
-            
+
             y_range = st.slider(
-                "Set Y-axis Range (ppm)", min_value=-20.0, max_value=20.0, 
+                "Set Y-axis Range (ppm)", min_value=-20.0, max_value=20.0,
                 value=(-5.0, 5.0), step=0.5,
                 help="Zoom in or out to focus on the most relevant mass error range."
             )
-            
-            try:
-                fig = visualizer.plot_mass_accuracy_distribution(q_value, list(y_range))
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate plot: {e}")
+
+            manager = PlotManager("dia_mass_acc_dist")
+            manager.module = "dia_qc"
+            manager.render_generate_button(
+                visualizer.plot_mass_accuracy_distribution,
+                q_value_cutoff=q_value,
+                y_range=list(y_range),
+            )
+            manager.render_plot_and_editor()
 
         with sentinel_tab:
             st.markdown("Track the mass accuracy for your selected sentinel peptides across all runs to spot systematic drift or inconsistencies.")
-            
+
             num_peptides = st.slider(
                 "Number of Peptides to Display", 1, len(st.session_state.sentinel_peptides),
                 min(5, len(st.session_state.sentinel_peptides)), 1,
@@ -372,26 +394,32 @@ class DiaQcTab:
             )
             peptides_to_plot = st.session_state.sentinel_peptides[:num_peptides]
 
-            try:
-                fig = visualizer.plot_sentinel_mass_accuracy(peptides_to_plot, q_value)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate plot: {e}")
+            manager = PlotManager("dia_sentinel_mass_acc")
+            manager.module = "dia_qc"
+            manager.render_generate_button(
+                visualizer.plot_sentinel_mass_accuracy,
+                sentinel_peptides=peptides_to_plot,
+                q_value_cutoff=q_value,
+            )
+            manager.render_plot_and_editor()
 
         with trend_tab:
             st.markdown("Visualize the smoothed trend of the median mass error per run. This helps to see long-term instrument calibration drift more clearly.")
-            
+
             window = st.slider(
                 "Moving Average Window", 1, 21, 5, 2,
                 key="mass_error_trend_slider",
                 help="Smooths the error trend over N runs."
             )
-            
-            try:
-                fig = visualizer.plot_mass_error_trend(q_value, window)
-                st.plotly_chart(fig, use_container_width=True)
-            except (ValueError, KeyError) as e:
-                st.error(f"Could not generate plot: {e}")
+
+            manager = PlotManager("dia_mass_error_trend")
+            manager.module = "dia_qc"
+            manager.render_generate_button(
+                visualizer.plot_mass_error_trend,
+                q_value_cutoff=q_value,
+                moving_avg_window=window,
+            )
+            manager.render_plot_and_editor()
 
     @handle_plotting_errors
     def _download_center_tab(self):

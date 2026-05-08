@@ -13,6 +13,7 @@ from modules.quant_module import render as render_quant
 from modules.comparative_module import render as render_comp
 from modules.scp_module import render as render_scp
 from utils.helpers import safe_render
+from utils.report_builder import ReportBuilder
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -25,14 +26,18 @@ st.set_page_config(
 st.title("Pro-Visualize: Proteomics Data Visualization")
 st.markdown("A scalable application for multi-omics analysis, starting with targeted and DIA-MS proteomics.")
 
+# Ensure the report builder is always available before any tab renders
+st.session_state.setdefault("report", ReportBuilder())
+
 # --- Create Main Tabs ---
-tab_welcome, tab_qc, tab_dilution, tab_quant, tab_comp, tab_scp, tab_chat = st.tabs([
+tab_welcome, tab_qc, tab_dilution, tab_quant, tab_comp, tab_scp, tab_report, tab_chat = st.tabs([
     "👋 Welcome",
     "📊 QC Analysis",
     "📈 Dilution Series",
     "📈 Quantification",
     "🆚 Comparative Analysis",
     "🔬 Single-Cell Proteomics",
+    "📋 Report",
     "💬 Pro-Viz Chat"
 ])
 
@@ -94,6 +99,13 @@ with tab_scp:
             "scp_visualizer", "scp_de_results",
             "scp_enr_results", "scp_score_cols",
         ],
+    )
+
+with tab_report:
+    safe_render(
+        "Report",
+        st.session_state["report"].render_preview,
+        reset_keys=["report"],
     )
 
 with tab_chat:

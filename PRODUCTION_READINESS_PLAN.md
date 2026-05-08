@@ -6,58 +6,74 @@
 
 ---
 
-## 🟡 Current Working State (last updated 2026-05-03 by Opus 4.7)
+## 🟡 Current Working State (last updated 2026-05-04 by Sonnet 4.6)
 
-**Active branch:** `feature/p0-foundation` (pushed to `origin`).
+**Active branch:** `feature/p4-dilution` — implementation complete, pending PR/merge/tag.
 
-### Commits made on this branch so far
+### Phase completion summary
 
-```
-bd6a21e chore(p0): align COLUMN_FALLBACKS with demo data column names
-efc55cc feat(p0): extend PlotManager with persistent edits, exports, MplPlotManager
-8278e47 feat(p0): add safe_render() tab isolation primitive and to_hex()
-e4a1f04 feat(p0): add utils/sanity.py validation helpers
-621d3f9 feat(p0): pin kaleido/jinja2 and populate central plot config
-33992d1 docs: add production readiness plan
-```
+| Phase | Status | Merge commit / tag | Branch |
+|-------|--------|-------------------|--------|
+| P0 — Foundation | ☑ Done | PR #1 merged → develop; `v2.0.0-p0` tagged | `feature/p0-foundation` |
+| P1 — Report Builder | ☑ Done | PR #2 merged → develop; `v2.0.0-p1` tagged | `feature/p1-report-builder` |
+| P2 — Comparative | ☑ Done | PR #3 merged → develop; `v2.0.0-p2` tagged | `feature/p2-comparative` |
+| P3 — Quantification | ☑ Done | PR #4 merged → develop; `v2.0.0-p3` tagged | `feature/p3-quant` |
+| P4 — Dilution Series | ⏳ Implemented | PR open → develop; pending merge + `v2.0.0-p4` tag | `feature/p4-dilution` |
 
-(Step 0 commits already on `develop`: `f26d708` SCP enrichment filters; `0d27126` merge.)
+### What's done in P2 (Comparative module upgrade)
 
-### What's done in P0 (Foundation layer)
+- ✅ **`@handle_plotting_errors`** added to all 5 plot methods in `comparative_visualizer.py`: `plot_volcano`, `plot_comparative_heatmap`, `plot_expression_violin`, `plot_enrichment_manhattan`, `plot_enrichment_dotplot`.
+- ✅ **`safe_render` isolation** — all 6 inner tabs (overview/select/volcano/heat/expr/path) wrapped in `try/except` with scoped error cards; failure in one tab cannot crash the others.
+- ✅ **Heatmap migrated to `MplPlotManager`** — replaces raw `st.image()`. Heatmap now has title/figsize/dpi editing, PNG download, and "Add to Report". `plot_comparative_heatmap` accepts `title`/`figsize`/`dpi` kwargs so edits actually re-render.
+- ✅ **Enrichment threshold presets** — "Most stringent" (FDR<0.01, |FC|>1.5), "Standard" (0.05/1.0), "Exploratory" (0.10/0.5) surfaced in Selection tab via selectbox + Apply button. Uses `SIGNIFICANCE_PRESETS` from `config/plot_configs.py`.
+- ✅ **Enrichr retry + timeout** — `HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5, status_forcelist=[429,500,502,503,504]))` + `timeout=30` on both POST and GET. Actionable error message on failure: "Enrichr API may be down — try again or use the offline gene-list export."
+- ✅ **`HUMAN_TRANSCRIPTION_FACTORS` moved to config** — removed class attribute from `comparative_visualizer.py`; now imported from `config/plot_configs.py` (single source of truth).
+- ✅ **"Add to Report" wired** — `.module = "comparative"` set on all 5 PlotManager/MplPlotManager instances (volcano, violin, manhattan, dotplot ×N, heatmap). Figures now appear under "comparative" in the Report tab, not "unknown".
 
-- ✅ **`requirements.txt`** — `kaleido==0.2.1` and `jinja2>=3.1.0` pinned. (Not yet installed in `.venv` — see Pending below.)
-- ✅ **`config/plot_configs.py`** — populated with `THEMES`, `OKABE_ITO_PALETTE`/`COLORBLIND_PALETTE`, `HUMAN_TRANSCRIPTION_FACTORS` (63 symbols, frozenset, single source replacing the duplicates in `quant_visualizer.py:29-37` and `comparative_visualizer.py:22-30`), `SIGNIFICANCE_DEFAULTS`/`SIGNIFICANCE_PRESETS`, `QC_THRESHOLDS`, `DEVIATION_BUCKETS`, `COLUMN_FALLBACKS` (aligned with real demo data — Quant uses `Level3`, SCP uses lowercase `condition`/`concentration`/`replicate`, etc.), `DIA_RUN_NAME_PATTERNS`, `EXPORT_DEFAULTS`.
-- ✅ **`utils/sanity.py`** — new module. `ValidationResult` dataclass, `validate_columns`, `detect_column`, `check_sample_alignment`, `check_value_ranges`, `summarize_missingness`, `gene_resolution_report`, `render_validation` (lazy Streamlit import for unit-testability). Verified with 7 unit tests.
-- ✅ **`utils/helpers.py`** — extended. `safe_render(label, fn, *args, reset_keys=None, **kwargs)` is the new tab-isolation primitive. `to_hex(color)` replaces fragile inline RGB parsers. `handle_plotting_errors` decorator preserved unchanged. Verified with 9 to_hex round-trips and 2 invalid-input cases.
-- ✅ **`utils/plot_manager.py`** — extended from 108 lines to ~470. Edits now persist across regeneration (params-hash invalidation). New editor controls: font size, legend position, gridlines (in addition to title/height/marker size/axis labels). Static exports added: PNG/SVG/HTML download buttons (PNG/SVG via `kaleido` — gracefully disabled with tooltip if missing; HTML via `fig.to_html(include_plotlyjs="cdn")`). New `MplPlotManager` class for matplotlib `BytesIO` figures. "Add to Report" stub queues into `st.session_state.report_queue` (real builder lands in P1).
+### What's done in P3 (Quantification module)
 
-### What's pending to close out P0 (per the P0 → P1 handover criteria)
+- ✅ **Venn/UpSet/Dendrogram/IntensityDist migrated to `MplPlotManager`** — title editing, DPI, PNG download, and "Add to Report" wired in.
+- ✅ **Correlation Matrix tab implemented** — Pearson/Spearman with hierarchical clustering reorder, upper triangle masked, values annotated for ≤30 samples.
+- ✅ **CV vs Intensity scatter** — new plot tab showing protein-level CV% vs log2 mean intensity.
+- ✅ **`HUMAN_TRANSCRIPTION_FACTORS` removed from class** — imported from `config/plot_configs` (single source of truth).
+- ✅ **`to_hex()` replaces fragile RGB parser** — `pc.unlabel_rgb` removed; `utils/helpers.to_hex()` used for group color picker.
+- ✅ **All PlotManager instances have `.module = "quant"`** — "Add to Report" routes correctly.
+- ✅ **Gene symbol coverage banner** — `sanity.gene_resolution_report` / `render_validation` wired at top of dashboard.
 
-| # | Task | Notes |
-|---|------|-------|
-| 1 | `pip install kaleido==0.2.1` in `.venv` | Required for PNG/SVG buttons to actually produce bytes. Without it, buttons render but are disabled. |
-| 2 | Wire `safe_render` into `app.py` for top-level tab bodies | Per Section 2.2: `with tab_quant: safe_render("Quantification", render_quant_module)`. Each module needs `reset_keys` listing its session_state keys. |
-| 3 | P0 smoke test (manual) | (a) Launch app, open SCP module, generate a plot, click each of PNG/SVG/HTML — files open and render. (b) Inject a deliberate exception inside one tab body, confirm error card appears, other tabs still load. |
-| 4 | Push remaining commits | After Step 1-3, `git push origin feature/p0-foundation` — last push was at commit `33992d1`. |
-| 5 | Open PR `feature/p0-foundation → develop` | Title: "P0: Foundation utilities (PlotManager / safe_render / sanity / config)". Body should list smoke-test results. |
-| 6 | Merge PR (squash) → `develop`, tag `v2.0.0-p0` | After merge, mark P0 ☑ Done in the phasing table below. |
-| 7 | Update this section with merge commit + cut `feature/p1-report-builder` | Keep this Current Working State section in sync as work lands. |
+### What's done in P4 (Dilution module)
+
+- ✅ **Configurable column names** — `sample_col`, `concentration_col`, `replicate_col`, `group_col` params added to `DilutionSeriesVisualizer.__init__`; metadata normalized to internal names at init so all downstream code is unchanged. UI text inputs in `_upload_data_section` under "Column Configuration" expander.
+- ✅ **`DEVIATION_BUCKETS` configurable** — two sliders (`good_thresh`, `warn_thresh`) in "Global Plot Settings" expander; passed through to `plot_relative_abundance_ratios` and `_classify_deviation_color`.
+- ✅ **CSV exports** — per-protein R² table (`get_r2_table()`), CV-by-concentration matrix (`get_cv_by_concentration_matrix()`), completeness summary (`get_completeness_summary()`) — all downloadable from their respective tabs.
+- ✅ **R² histogram + ranked R² table** — new "📉 Linearity (R²)" tab with `plot_r2_histogram()`, median R² caption, sortable table, and CSV download.
+- ✅ **LOD/LOQ plot + table** — new "🔬 LOD/LOQ" tab with `plot_lod_loq()` (scatter LOD vs R²), `get_lod_loq_table()` (slope-based: LOD = 2^(log₂C_min + 3.3σ/slope)), sortable table with in-range indicator, CSV download.
+- ✅ **Sanity checks** — `run_sanity_checks()` checks for non-positive concentrations, duplicate replicate-concentration pairs, uneven geometric ratios, and negative-slope proteins; displayed in collapsible banner at top of dashboard.
+- ✅ **ReportBuilder wired** — `.module = "dilution"` set on all 10 `PlotManager` instances.
+
+### What's next — P5 (QC module)
+
+Cut `feature/p5-qc` from develop after P4 merges. Scope defined in §3.1.
+
+Smoke-test checklist (P4):
+- Upload dilution fixture from demo data folder → generate all existing plots → confirm new LOD/LOQ tab renders → adjust deviation sliders → add to report → export HTML + ZIP.
 
 ### Environment notes (critical for resumption)
 
-- **Python venv** is at `.venv/` in repo root: `source .venv/bin/activate`. Streamlit 1.36.0 + pandas 2.2.2 are installed.
-- **`python` is NOT on PATH unactivated** — system has only `python3` (3.9.6, too old). Always activate the venv first.
-- **Demo data** lives on a mounted volume at `/Volumes/VanEykJLab-Files/ByPerson/Ajay/Pro-Vizualize-2.0-Demo/` — see the `reference_demo_data.md` memory for per-folder layout. Used for smoke tests; the user said do not over-engineer QC validation around it.
-- **`.claude/settings.local.json`** has unrelated harness config drift in working tree — leave it; do not stage.
+- **Python venv** at `.venv/`: `source .venv/bin/activate`. `kaleido==0.2.1` installed.
+- **`python` not on PATH unactivated** — system python3 is 3.9.6. Always activate venv first.
+- **Demo data** at `/Volumes/VanEykJLab-Files/ByPerson/Ajay/Pro-Vizualize-2.0-Demo/` — see `reference_demo_data.md` memory.
+- **`.claude/settings.local.json`** has harness config drift in working tree — leave it; do not stage.
 
-### What P1 looks like (next phase, for the picking-up instance)
+### What P2 looks like (next phase)
 
-Cut `feature/p1-report-builder` from `develop` after P0 merges. P1 deliverables:
-- New `utils/report_builder.py` with `ReportBuilder` class (see Section 2.1 — `add_figure / add_table / add_section / remove / reorder / export_html / export_zip`).
-- New `templates/report.html.j2` (Jinja2, embeds Plotly figures via `fig.to_html(full_html=False, include_plotlyjs='cdn')`, matplotlib figures inline base64-PNG).
-- New top-level "Report" tab in `app.py` with download buttons for HTML and ZIP.
-- Wire `_queue_for_report` (currently a stub at `utils/plot_manager.py:_queue_for_report`) to the real builder.
-- P1 smoke test: SCP → add 2 figures → Report tab → download both formats → both open and contain the figures.
+Cut `feature/p2-comparative` from `develop`. P2 deliverables (Section 3.4):
+- Add `@handle_plotting_errors` + `safe_render` to all Comparative tabs (currently no error handling at all).
+- Migrate heatmap to `MplPlotManager`.
+- Surface enrichment presets: "Most stringent" (FDR<0.01, |log2FC|>1.5), "Standard" (0.05/1.0), "Exploratory" (0.1/0.5).
+- Wrap Enrichr/g:Profiler calls in `HTTPAdapter(max_retries=3)` + 30s timeout; actionable error on failure.
+- Move `HUMAN_TRANSCRIPTION_FACTORS` import to `config/plot_configs.py` (remove duplicate in `comparative_visualizer.py:22-30`).
+- Hook "Add to Report" into `ReportBuilder` for all Comparative plots.
+- Critical files: `modules/comparative_module.py`, `visualizations/comparative_visualizer.py`.
 
 ---
 
@@ -409,8 +425,8 @@ The plan is sized so each phase ships value independently — you can stop after
 
 | Phase | Status | Scope | Effort | Ship Value |
 |-------|--------|-------|--------|-----------|
-| **P0** | ⏳ In progress | Foundation: extend `PlotManager`, `safe_render`, config, sanity, kaleido | 1-2 days | Tab isolation + static exports work everywhere |
-| **P1** | ☐ Pending | Report Builder (HTML + ZIP bundle) + template + Report tab | 1-2 days | Scientists leave with interactive HTML or raw asset ZIP |
+| **P0** | ☑ Done (`v2.0.0-p0`) | Foundation: extend `PlotManager`, `safe_render`, config, sanity, kaleido | 1-2 days | Tab isolation + static exports work everywhere |
+| **P1** | ☑ Done (pending merge) | Report Builder (HTML + ZIP bundle) + template + Report tab | 1-2 days | Scientists leave with interactive HTML or raw asset ZIP |
 | **P2** | ☐ Pending | Comparative module upgrade (most user-facing, most fragile) | 1 day | Critical path stabilized |
 | **P3** | ☐ Pending | Quantification module upgrade + correlation matrix | 1 day | Feature-complete |
 | **P4** | ☐ Pending | Dilution module upgrade + LOD/LOQ feature | 0.5-1 day | Adds genuine new science |

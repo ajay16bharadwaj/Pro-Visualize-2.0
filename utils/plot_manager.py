@@ -411,7 +411,7 @@ class MplPlotManager:
                 kind="matplotlib_png",
             )
 
-        st.image(buf, use_container_width=True)
+        st.image(buf, use_column_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -456,16 +456,14 @@ def _read_title(fig) -> str | None:
 
 def _queue_for_report(module: str | None, key: str, fig: Any, title: str,
                       params: dict, kind: str) -> None:
-    """Stub queue. Real queue lands in P1's utils/report_builder.py."""
-    queue = st.session_state.setdefault("report_queue", [])
-    # Prevent duplicates by key
-    queue[:] = [q for q in queue if q.get("key") != key]
-    queue.append({
-        "module": module or "unknown",
-        "key": key,
-        "title": title,
-        "params": params,
-        "kind": kind,
-        "fig": fig,
-    })
+    from utils.report_builder import ReportBuilder
+    builder = st.session_state.setdefault("report", ReportBuilder())
+    builder.add_figure(
+        module=module or "unknown",
+        key=key,
+        fig=fig,
+        title=title,
+        params=params,
+        kind=kind,
+    )
     st.toast(f"Added to report: {title}", icon="📄")

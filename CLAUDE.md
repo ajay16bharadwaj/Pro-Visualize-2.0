@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Session Usage Policy
+
+**If context usage reaches 90%:** immediately (1) update `PRODUCTION_READINESS_PLAN.md` with completed work, (2) save relevant memories, then (3) stop. Do not continue implementing beyond this point. The next session will resume from the plan.
+
 ## Overview
 
 Pro-Visualize is a Streamlit-based proteomics data visualization application supporting QC, Quantification, Comparative Analysis, Pathway Enrichment, Dilution Series, and Functional Annotation workflows.

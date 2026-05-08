@@ -5,6 +5,12 @@ from typing import Dict, List
 import plotly.graph_objects as go
 import plotly.express as px
 
+try:
+    from config.plot_configs import DIA_RUN_NAME_PATTERNS, QC_THRESHOLDS
+except Exception:
+    DIA_RUN_NAME_PATTERNS = {}
+    QC_THRESHOLDS = {"control_sigma": 2.0}
+
 # Set up a logger for this module
 logger = logging.getLogger(__name__)
 
@@ -105,9 +111,9 @@ class DiaQcVisualizer:
         unique_runs_df = df[['Run']].drop_duplicates().reset_index(drop=True)
         runs = unique_runs_df['Run'].astype(str)
 
-        # --- Generic patterns for extraction ---
+        # --- Regex patterns — pulled from config, fall back to built-in defaults ---
         date_pattern = r'^(\d{8}|\d{6})'
-        amount_pattern = r'(\d+ng)'
+        amount_pattern = DIA_RUN_NAME_PATTERNS.get("amount_ng", [r'(\d+ng)'])[0]
         well_pattern = r'_([A-Z]{2,3}\d{1,2})_'
         injection_id_pattern = r'_(\d+)$'
         lr_label_pattern = r'_(L|R)_'
@@ -250,8 +256,22 @@ class DiaQcVisualizer:
         logger.info(f"Filtered data to {len(filtered_df)} precursors with Q.Value < {q_value_cutoff}.")
         return filtered_df
 
-    def plot_control_chart(self, peptide_id: str, metric_col: str, y_axis_title: str, q_value_cutoff: float):
-        """Generates a Levey-Jennings style control chart for a specific peptide and metric."""
+    def plot_control_chart(
+        self,
+        peptide_id: str,
+        metric_col: str,
+        y_axis_title: str,
+        q_value_cutoff: float,
+        sigma_threshold: float = None,
+    ):
+        """Generates a Levey-Jennings style control chart for a specific peptide and metric.
+
+        sigma_threshold controls which σ-band is highlighted as the warning limit
+        (default from QC_THRESHOLDS["control_sigma"]).
+        """
+        if sigma_threshold is None:
+            sigma_threshold = QC_THRESHOLDS.get("control_sigma", 2.0)
+
         df = self._filter_by_q_value(q_value_cutoff)
         peptide_df = df[df['Precursor.Id'] == peptide_id].sort_values('Injection_Order').copy()
 
@@ -260,7 +280,7 @@ class DiaQcVisualizer:
 
         mean = peptide_df[metric_col].mean()
         std = peptide_df[metric_col].std()
-        
+
         upper_3_std, lower_3_std = mean + 3 * std, mean - 3 * std
         upper_2_std, lower_2_std = mean + 2 * std, mean - 2 * std
         upper_1_std, lower_1_std = mean + 1 * std, mean - 1 * std
@@ -270,14 +290,23 @@ class DiaQcVisualizer:
         fig.add_hrect(y0=lower_2_std, y1=upper_2_std, fillcolor='rgba(173,216,230,0.4)', line_width=0)
         fig.add_hrect(y0=lower_1_std, y1=upper_1_std, fillcolor='rgba(144,238,144,0.4)', line_width=0)
         fig.add_hline(y=mean, line_width=2, line_dash="dash", line_color="red")
-        
+
+        # Warning threshold lines at ±sigma_threshold * std
+        warn_upper = mean + sigma_threshold * std
+        warn_lower = mean - sigma_threshold * std
+        for y_warn in (warn_upper, warn_lower):
+            fig.add_hline(
+                y=y_warn, line_width=1.5, line_dash="dot", line_color="orange",
+                annotation_text=f"±{sigma_threshold}σ", annotation_position="right",
+            )
+
         fig.add_trace(go.Scatter(
             x=peptide_df['Acquisition_Date'],
             y=peptide_df[metric_col],
             mode='lines+markers', name='Value',
             marker=dict(color='black', size=6),
             hoverinfo='text',
-            text=[f"Run: {run}<br>Date: {date.date()}<br>Value: {val:.2f}" 
+            text=[f"Run: {run}<br>Date: {date.date()}<br>Value: {val:.2f}"
                   for run, date, val in zip(peptide_df['Run'], peptide_df['Acquisition_Date'], peptide_df[metric_col])]
         ))
 
