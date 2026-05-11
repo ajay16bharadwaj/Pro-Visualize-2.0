@@ -42,20 +42,87 @@ tab_welcome, tab_qc, tab_dilution, tab_quant, tab_comp, tab_scp, tab_report, tab
 ])
 
 with tab_welcome:
-    st.header("Welcome to Pro-Visualize!")
-    st.markdown("""
-    This application is designed to provide a comprehensive suite of tools for visualizing and analyzing proteomics data.
+    st.title("Pro-Visualize 2.0")
+    st.caption("Proteomics data visualization — from raw QC to single-cell DE, all in one place.")
 
-    **Current Modules:**
-    - **QC Analysis**: Upload and analyze Quality Control data from both DIA and Targeted (e.g., PRM/SRM) experiments.
-    - **Dilution Series (Loading-curve)**: Upload and analyze loading curve data from DIA experiments.
-    - **Quantification**: Upload protein-level data to perform quantitative analysis.
-    - **Comparative Analysis**: Visualize statistical comparisons between groups.
-    - **Single-Cell Proteomics**: End-to-end SCP analysis — QC filtering, normalization, regression of technical covariates,
-      PCA, UMAP, Leiden clustering, differential expression (Wilcoxon), and per-cell activity scoring.
+    st.markdown("---")
+    st.subheader("Quick-Start — pick your data type")
 
-    Navigate to the desired tab to begin.
-    """)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        with st.container(border=True):
+            st.markdown("### 📊 QC Analysis")
+            st.markdown(
+                "Have a **DIA-NN `.parquet` report**? Upload it to inspect "
+                "RT/IM control charts, mass accuracy, peak width distributions, "
+                "and sentinel peptide stability across runs."
+            )
+            st.markdown("*Also supports targeted (PRM/SRM) QC.*")
+            st.info("→ Go to **QC Analysis** tab", icon="👆")
+
+        with st.container(border=True):
+            st.markdown("### 📈 Dilution Series")
+            st.markdown(
+                "Have a **loading-curve protein matrix** (e.g., from DIA-NN)? "
+                "Visualize linearity (R²), CV across concentrations, LOD/LOQ "
+                "estimates, and protein completeness."
+            )
+            st.info("→ Go to **Dilution Series** tab", icon="👆")
+
+    with c2:
+        with st.container(border=True):
+            st.markdown("### 📈 Quantification")
+            st.markdown(
+                "Have a **protein-level intensity matrix** with a sample annotation "
+                "file? Explore protein counts, PCA, sample correlation, missing-value "
+                "patterns, Venn/UpSet overlaps, and rank-order plots."
+            )
+            st.info("→ Go to **Quantification** tab", icon="👆")
+
+        with st.container(border=True):
+            st.markdown("### 🆚 Comparative Analysis")
+            st.markdown(
+                "Have fold-change + FDR results from a statistical test? Upload your "
+                "comparison table alongside the intensity matrix to generate volcano "
+                "plots, expression heatmaps, violin plots, and pathway enrichment."
+            )
+            st.info("→ Go to **Comparative Analysis** tab", icon="👆")
+
+    with c3:
+        with st.container(border=True):
+            st.markdown("### 🔬 Single-Cell Proteomics")
+            st.markdown(
+                "Have a **DIA-NN PG-matrix** from an SCP experiment? Run the full "
+                "pipeline: QC filtering → normalization → PCA → UMAP → Leiden "
+                "clustering → Wilcoxon DE → pathway enrichment → activity scoring."
+            )
+            st.info("→ Go to **Single-Cell Proteomics** tab", icon="👆")
+
+        with st.container(border=True):
+            st.markdown("### 📋 Report Builder")
+            st.markdown(
+                "Every plot in every module has an **Add to Report** button. "
+                "Collect your key figures, add interpretation notes, then export "
+                "an interactive HTML report or a ZIP bundle of PNG/SVG/HTML assets."
+            )
+            st.info("→ Go to **Report** tab", icon="👆")
+
+    st.markdown("---")
+
+    with st.expander("Expected file formats"):
+        st.markdown("""
+| Module | File 1 | File 2 (optional) |
+|--------|--------|-------------------|
+| QC (DIA) | DIA-NN report `.parquet` | — |
+| QC (Targeted) | Skyline/Spectronaut report `.tsv/.csv` | — |
+| Dilution Series | Protein matrix `.tsv/.csv` | Sample annotation `.tsv/.csv` |
+| Quantification | Protein matrix `.tsv/.csv` | Sample annotation `.tsv/.csv` |
+| Comparative | Protein matrix `.tsv/.csv` | Annotation + comparison table |
+| SCP | DIA-NN PG-matrix `.tsv/.csv` | Sample annotation `.tsv/.csv` |
+
+All text files are auto-detected (tab or comma separated).
+Column names are **configurable** per module — you are not locked in to specific headers.
+        """)
 
 with tab_qc:
     safe_render(

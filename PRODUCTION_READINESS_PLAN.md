@@ -6,9 +6,9 @@
 
 ---
 
-## 🟡 Current Working State (last updated 2026-05-08 by Sonnet 4.6)
+## 🟢 Current Working State (last updated 2026-05-10 by Sonnet 4.6)
 
-**Active branch:** `develop` — P6 merged and tagged. Next: cut `feature/p7-deploy-ready`.
+**Active branch:** `feature/p7-deploy-ready` — P7 implementation complete, PR pending → develop.
 
 ### Phase completion summary
 
@@ -21,6 +21,7 @@
 | P4 — Dilution Series | ☑ Done | PR #5 merged → develop; `v2.0.0-p4` tagged | `feature/p4-dilution` |
 | P5 — QC (DIA) | ☑ Done | PR #6 merged → main (sync'd to develop); `v2.0.0-p5` tagged | `feature/p5-qc` |
 | P6 — SCP Polish | ☑ Done | PR #7 merged → develop; `v2.0.0-p6` tagged | `feature/p6-scp-polish` |
+| P7 — Deploy-Ready | ⏳ PR open | PR #8 → develop; `v2.0.0` tag on release | `feature/p7-deploy-ready` |
 
 ### What's done in P2 (Comparative module upgrade)
 
@@ -68,13 +69,29 @@
 - ✅ **Expression Overlay UMAP** — new "🎨 Expression Overlay" tab in Embedding. Select any protein from a dropdown; UMAP coloured by log-normalised expression (Viridis). `plot_expression_umap()` + `get_protein_names()` added to `SCPVisualizer`.
 - ✅ **`scp_expr_umap` and `scp_de_heatmap`** added to `PLOT_KEYS` so cached figures clear on pipeline resets.
 
-### What's next — P7 (Deploy-Ready)
+### What's done in P7 (Deploy-Ready)
 
-Cut `feature/p7-deploy-ready` from develop. Scope defined in §E (Deployment Hygiene):
-- `Dockerfile`, `docker-compose.yml`, `.streamlit/config.toml`, `.dockerignore`, `Makefile`
-- `tests/` with at least one smoke test per visualizer
-- Welcome page rebuilt with quick-start cards and sample fixtures
-- Merge develop → main for release tag `v2.0.0`
+- ✅ **`Dockerfile`** — Python 3.11-slim + `libgbm1`/`libasound2`/`libxshmfence1` for kaleido Chromium; `/_stcore/health` healthcheck; exposes 8501.
+- ✅ **`docker-compose.yml`** — single service with `./data` + `./reports` volume mounts, `env_file: .env.docker`, `restart: unless-stopped`.
+- ✅ **`.env.docker`** — committed with safe defaults (`STREAMLIT_SERVER_MAX_UPLOAD_SIZE=500`).
+- ✅ **`.dockerignore`** — excludes `.git`, `.venv`, `__pycache__`, `.claude/`, `data/`, `reports/`, etc.
+- ✅ **`Makefile`** — `build`, `run`, `stop`, `logs`, `test`, `lint`, `clean` targets.
+- ✅ **`.streamlit/config.toml`** — `maxUploadSize=500`, `enableXsrfProtection=true`, `headless=true`.
+- ✅ **`tests/`** — 50 pytest smoke tests across all 5 visualizers + ReportBuilder + sanity helpers:
+  - `test_dilution_visualizer.py` (7 tests) — instantiation + 5 plot methods + LOD/LOQ
+  - `test_quant_visualizer.py` (7 tests) — instantiation + PCA, correlation, CV vs intensity, rank-order
+  - `test_comparative_visualizer.py` (4 tests) — instantiation + volcano, violin, heatmap
+  - `test_dia_qc_visualizer.py` (5 tests) — parquet loading, metadata extraction, error cases
+  - `test_scp_visualizer.py` (5 tests) — instantiation, QC metrics, preprocess, PCA, plot
+  - `test_report_builder.py` (9 tests) — add/remove/reorder, HTML export, ZIP structure
+  - `test_sanity.py` (13 tests) — validate_columns, check_sample_alignment, missingness, gene resolution
+- ✅ **Welcome tab redesign** — quick-start cards per module with expected file-format table; replaced static markdown with `st.container(border=True)` cards.
+
+**Next steps (release):**
+1. Open PR #8: `feature/p7-deploy-ready` → `develop`
+2. Smoke test: `pytest tests/ -q` passes (50/50)
+3. Merge PR → develop, tag `v2.0.0-p7`
+4. Merge `develop` → `main`, tag `v2.0.0`
 
 ### Environment notes (critical for resumption)
 
@@ -451,7 +468,7 @@ The plan is sized so each phase ships value independently — you can stop after
 | **P4** | ☐ Pending | Dilution module upgrade + LOD/LOQ feature | 0.5-1 day | Adds genuine new science |
 | **P5** | ☐ Pending | QC module upgrade (DIA + Targeted) | 1.5-2 days | Brittle code path hardened |
 | **P6** | ☐ Pending | SCP polish + state persistence | 1 day | Reproducibility |
-| **P7** | ☐ Pending | Welcome page, wizard, Dockerfile/compose, tests | 1-2 days | Deploy-ready (self-hosted Docker) |
+| **P7** | ⏳ PR open | Welcome page, wizard, Dockerfile/compose, tests | 1-2 days | Deploy-ready (self-hosted Docker) |
 
 Total: ~8-12 working days of focused effort. P0+P1 first because everything else inherits from them.
 
