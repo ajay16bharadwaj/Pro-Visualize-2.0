@@ -6,9 +6,9 @@
 
 ---
 
-## 🟡 Current Working State (last updated 2026-05-04 by Sonnet 4.6)
+## 🟢 Current Working State (last updated 2026-05-10 by Sonnet 4.6)
 
-**Active branch:** `feature/p4-dilution` — implementation complete, pending PR/merge/tag.
+**Active branch:** `feature/p7-deploy-ready` — P7 implementation complete, PR pending → develop.
 
 ### Phase completion summary
 
@@ -18,7 +18,11 @@
 | P1 — Report Builder | ☑ Done | PR #2 merged → develop; `v2.0.0-p1` tagged | `feature/p1-report-builder` |
 | P2 — Comparative | ☑ Done | PR #3 merged → develop; `v2.0.0-p2` tagged | `feature/p2-comparative` |
 | P3 — Quantification | ☑ Done | PR #4 merged → develop; `v2.0.0-p3` tagged | `feature/p3-quant` |
-| P4 — Dilution Series | ⏳ Implemented | PR open → develop; pending merge + `v2.0.0-p4` tag | `feature/p4-dilution` |
+| P4 — Dilution Series | ☑ Done | PR #5 merged → develop; `v2.0.0-p4` tagged | `feature/p4-dilution` |
+| P5 — QC (DIA) | ☑ Done | PR #6 merged → main (sync'd to develop); `v2.0.0-p5` tagged | `feature/p5-qc` |
+| P6 — SCP Polish | ☑ Done | PR #7 merged → develop; `v2.0.0-p6` tagged | `feature/p6-scp-polish` |
+| P7 — Deploy-Ready | ⏳ PR open | PR #8 → develop; `v2.0.0` tag on release | `feature/p7-deploy-ready` |
+| P8 — Publication Hardening | ⏳ PR pending | umbrella → develop; `v2.0.1` on release | `feature/p8-publication-hardening` (subs: p8a–p8d) |
 
 ### What's done in P2 (Comparative module upgrade)
 
@@ -50,12 +54,88 @@
 - ✅ **Sanity checks** — `run_sanity_checks()` checks for non-positive concentrations, duplicate replicate-concentration pairs, uneven geometric ratios, and negative-slope proteins; displayed in collapsible banner at top of dashboard.
 - ✅ **ReportBuilder wired** — `.module = "dilution"` set on all 10 `PlotManager` instances.
 
-### What's next — P5 (QC module)
+### What's done in P5 (DIA QC module)
 
-Cut `feature/p5-qc` from develop after P4 merges. Scope defined in §3.1.
+- ✅ **PlotManager wired into all 10 DIA QC plots** — IM control/drift, RT control/drift/pred-error/peak-width/elution, mass-accuracy dist/sentinel/trend. All have PNG/SVG/HTML export + "Add to Report".
+- ✅ **`.module = "dia_qc"`** on every PlotManager — Report tab correctly categorises DIA QC figures.
+- ✅ **Configurable σ-threshold slider** (1–3σ, default 2) in IM and RT control chart tabs; orange dotted ±Nσ warning lines drawn at the chosen threshold.
+- ✅ **`QC_THRESHOLDS` and `DIA_RUN_NAME_PATTERNS` imported from `config/plot_configs`** — config-driven defaults, no hardcoded values in `DiaQcVisualizer`.
+- ✅ **SCP bonus fix** — Windows backslash paths in `scp_visualizer.py` normalised before `os.path.basename()`, fixing annotation↔PG-matrix matching for DIA-NN files from Windows.
 
-Smoke-test checklist (P4):
-- Upload dilution fixture from demo data folder → generate all existing plots → confirm new LOD/LOQ tab renders → adjust deviation sliders → add to report → export HTML + ZIP.
+### What's done in P6 (SCP module polish)
+
+- ✅ **`_pm()` / `_mpl_pm()` helpers** — all 14+ SCP PlotManagers pre-stamped with `.module = "scp"`; every SCP figure now routes to the Report tab.
+- ✅ **DE heatmap → `MplPlotManager`** — migrated from bare `st.image()`. Gains title editing, DPI, PNG download, "Add to Report". `plot_de_heatmap()` accepts `title`/`figsize`/`dpi` kwargs.
+- ✅ **Session save / load** — "💾 Save / Load Session" expander in Preprocessing tab. Serialises full `SCPVisualizer` (AnnData + `pp_state`) via pickle. Scientists can resume analysis across sessions.
+- ✅ **Expression Overlay UMAP** — new "🎨 Expression Overlay" tab in Embedding. Select any protein from a dropdown; UMAP coloured by log-normalised expression (Viridis). `plot_expression_umap()` + `get_protein_names()` added to `SCPVisualizer`.
+- ✅ **`scp_expr_umap` and `scp_de_heatmap`** added to `PLOT_KEYS` so cached figures clear on pipeline resets.
+
+### What's done in P7 (Deploy-Ready)
+
+- ✅ **`Dockerfile`** — Python 3.11-slim + `libgbm1`/`libasound2`/`libxshmfence1` for kaleido Chromium; `/_stcore/health` healthcheck; exposes 8501.
+- ✅ **`docker-compose.yml`** — single service with `./data` + `./reports` volume mounts, `env_file: .env.docker`, `restart: unless-stopped`.
+- ✅ **`.env.docker`** — committed with safe defaults (`STREAMLIT_SERVER_MAX_UPLOAD_SIZE=500`).
+- ✅ **`.dockerignore`** — excludes `.git`, `.venv`, `__pycache__`, `.claude/`, `data/`, `reports/`, etc.
+- ✅ **`Makefile`** — `build`, `run`, `stop`, `logs`, `test`, `lint`, `clean` targets.
+- ✅ **`.streamlit/config.toml`** — `maxUploadSize=500`, `enableXsrfProtection=true`, `headless=true`.
+- ✅ **`tests/`** — 50 pytest smoke tests across all 5 visualizers + ReportBuilder + sanity helpers:
+  - `test_dilution_visualizer.py` (7 tests) — instantiation + 5 plot methods + LOD/LOQ
+  - `test_quant_visualizer.py` (7 tests) — instantiation + PCA, correlation, CV vs intensity, rank-order
+  - `test_comparative_visualizer.py` (4 tests) — instantiation + volcano, violin, heatmap
+  - `test_dia_qc_visualizer.py` (5 tests) — parquet loading, metadata extraction, error cases
+  - `test_scp_visualizer.py` (5 tests) — instantiation, QC metrics, preprocess, PCA, plot
+  - `test_report_builder.py` (9 tests) — add/remove/reorder, HTML export, ZIP structure
+  - `test_sanity.py` (13 tests) — validate_columns, check_sample_alignment, missingness, gene resolution
+- ✅ **Welcome tab redesign** — quick-start cards per module with expected file-format table; replaced static markdown with `st.container(border=True)` cards.
+
+**Next steps (release):**
+1. Open PR #8: `feature/p7-deploy-ready` → `develop`
+2. Smoke test: `pytest tests/ -q` passes (50/50)
+3. Merge PR → develop, tag `v2.0.0-p7`
+4. Merge `develop` → `main`, tag `v2.0.0`
+
+### What's done in P8 (Publication Hardening — pre-paper audit)
+
+Branch `feature/p8-publication-hardening`, cut from `feature/p7-deploy-ready`
+(P7 was not yet on `develop`, so the Docker/tests work being hardened lived
+only on the P7 branch). Four reviewable sub-checkpoints, each merged `--no-ff`:
+
+- **P8a — Reproducible build** (`feature/p8a-repro-deploy`, commit `97035f7`):
+  pinned all loose deps to exact versions (scanpy 1.11.5, anndata 0.12.11,
+  gseapy 1.2.1, igraph 1.0.0, leidenalg 0.11.0, jinja2 3.1.6); enabled
+  harmonypy 2.0.0 (guarded import). New `requirements-dev.txt`
+  (pytest 9.0.3, ruff 0.15.16). Dockerfile pinned to `python:3.11.15-slim`,
+  non-root `appuser`, full kaleido/Chromium libs. New `.github/workflows/ci.yml`
+  (lint + pytest; docker build asserting non-root + kaleido PNG export).
+  `pyproject.toml` ruff config (F + E9). Makefile test/lint targets made
+  CI-safe. Lint hygiene + `.DS_Store` gitignore.
+- **P8b — Enrichment background toggle** (`feature/p8b-enrichment-background`,
+  commit `bed7f14`): the one scientific-correctness fix. Enrichment can now use
+  the study's **detected proteins** as the statistical background (default)
+  instead of the whole genome, via Enrichr Speedrichr endpoints (comparative)
+  and gseapy `background=` (SCP); whole-genome remains an explicit option.
+  UI selector + background-N caption in both modules. Network-mocked tests.
+- **P8c — Robustness polish** (`feature/p8c-robustness-polish`, commit
+  `e93dc94`): new `utils/logging_config.py` (root logging, called from
+  `app.py`); replaced silent `except: pass` in `plot_manager.py` with logging;
+  empty/degenerate-data guards on Venn/UpSet/clustering. Audit note: error
+  isolation was already comprehensive (PlotManager try/except + QC tab-method
+  decorators + tab-level `safe_render`), so blanket-decorating was unnecessary.
+- **P8d — Reproducibility report** (`feature/p8d-repro-report`, commit
+  `9a62e25`): report exports now embed a Methods & Reproducibility block
+  (app/git/python/package versions); ZIP gains `provenance.json` and nests
+  params under `parameters.json`; `add_figure` guards non-serializable params.
+- **P8 (umbrella) — Methods doc**: `METHODS.md` with ready-to-paste language
+  for the paper (statistics, transformation/imputation, LOD/LOQ, SCP, QC,
+  enrichment background).
+
+Test suite grew 50 → 60; `ruff check .` clean. Docker-level gates (build,
+non-root, kaleido PNG) are exercised by CI (local docker daemon was down).
+
+**P8 release steps:**
+1. Open PR: `feature/p8-publication-hardening` → `develop` (after P7 merges).
+2. Confirm CI green (lint + pytest 60/60 + docker build/import/PNG).
+3. Merge → develop; merge `develop` → `main`; tag `v2.0.1`.
 
 ### Environment notes (critical for resumption)
 
@@ -432,7 +512,7 @@ The plan is sized so each phase ships value independently — you can stop after
 | **P4** | ☐ Pending | Dilution module upgrade + LOD/LOQ feature | 0.5-1 day | Adds genuine new science |
 | **P5** | ☐ Pending | QC module upgrade (DIA + Targeted) | 1.5-2 days | Brittle code path hardened |
 | **P6** | ☐ Pending | SCP polish + state persistence | 1 day | Reproducibility |
-| **P7** | ☐ Pending | Welcome page, wizard, Dockerfile/compose, tests | 1-2 days | Deploy-ready (self-hosted Docker) |
+| **P7** | ⏳ PR open | Welcome page, wizard, Dockerfile/compose, tests | 1-2 days | Deploy-ready (self-hosted Docker) |
 
 Total: ~8-12 working days of focused effort. P0+P1 first because everything else inherits from them.
 

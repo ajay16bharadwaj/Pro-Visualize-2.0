@@ -29,13 +29,11 @@ import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from sklearn.preprocessing import StandardScaler
-from sklearn.impute import SimpleImputer
 from scipy.sparse import issparse
 
 try:
     import scanpy as sc
-    import anndata as ad
+    import anndata as ad  # noqa: F401 — availability probe; sets SCANPY_AVAILABLE
     SCANPY_AVAILABLE = True
 except ImportError:
     SCANPY_AVAILABLE = False
@@ -47,7 +45,7 @@ except ImportError:
     HARMONY_AVAILABLE = False
 
 try:
-    import gseapy as gp
+    import gseapy as gp  # noqa: F401 — availability probe; sets GSEAPY_AVAILABLE
     GSEAPY_AVAILABLE = True
 except ImportError:
     GSEAPY_AVAILABLE = False
@@ -654,6 +652,20 @@ class SCPVisualizer:
 
         return computed
 
+    def _all_gene_symbols(self) -> list:
+        """Every gene symbol quantified in the dataset — the detected-protein
+        universe used as the statistical background for enrichment."""
+        _GENE_COL_CANDIDATES = ["Genes", "Gene.Names", "Gene names", "Gene", "gene_names"]
+        gene_col = next((c for c in _GENE_COL_CANDIDATES if c in self.adata.var.columns), None)
+        symbols: list[str] = []
+        source = self.adata.var[gene_col] if gene_col else self.adata.var_names
+        for raw in source:
+            for sym in str(raw).split(";"):
+                sym = sym.strip()
+                if sym and sym.lower() != "nan":
+                    symbols.append(sym)
+        return list(dict.fromkeys(symbols))
+
     def run_gsea_enrichment(
         self,
         de_group: str,
@@ -661,6 +673,7 @@ class SCPVisualizer:
         fc_thresh: float = 1.0,
         gene_sets: list = None,
         direction: str = "both",
+        background_genes: list | None = None,
     ) -> "pd.DataFrame":
         import gseapy as gp
 
@@ -735,10 +748,19 @@ class SCPVisualizer:
                 )
             )
 
+        # A custom background (the dataset's detected proteins) is the correct
+        # universe for enrichment; gseapy routes a list background through
+        # Enrichr's Speedrichr endpoint. None → Enrichr whole-genome default.
+        bg = None
+        if background_genes:
+            bg = [g for g in dict.fromkeys(background_genes) if g and g.lower() != "nan"]
+            logger.info("GSEA enrichment using custom background of %d detected genes.", len(bg))
+
         enr = gp.enrichr(
             gene_list=gene_list,
             gene_sets=gene_sets,
             organism="human",
+            background=bg,
             outdir=None,
             verbose=False,
         )
@@ -1213,6 +1235,10 @@ class SCPVisualizer:
         n_top: int = 25,
         pval_thresh: float = 0.05,
         fc_thresh: float = 0.5,
+        title: str = "",
+        figsize: tuple = None,
+        dpi: int = 150,
+        **kwargs,
     ) -> BytesIO:
         """Static seaborn clustermap of top DE proteins."""
         sig = de_df[
@@ -1235,15 +1261,17 @@ class SCPVisualizer:
             palette = sns.color_palette("tab10", len(uniq))
             col_colors = groups.map(dict(zip(uniq, palette)))
 
+        plot_figsize = figsize if figsize else (12, max(8, len(heat_df) * 0.22))
         g = sns.clustermap(
             heat_df, method="ward", cmap="RdBu_r", z_score=0, center=0,
             col_colors=col_colors.to_frame() if col_colors is not None else None,
             yticklabels=(len(heat_df) <= 50),
-            figsize=(12, max(8, len(heat_df) * 0.22)),
+            figsize=plot_figsize,
         )
-        g.fig.suptitle(f"Top DE Proteins (n={len(top_proteins)})", y=1.02)
+        heading = title if title else f"Top DE Proteins (n={len(top_proteins)})"
+        g.fig.suptitle(heading, y=1.02)
         buf = BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=dpi)
         buf.seek(0)
         plt.close(g.fig)
         return buf
@@ -1251,6 +1279,37 @@ class SCPVisualizer:
     # ─────────────────────────────────────────────────────────────────────────
     # ACTIVITY SCORE PLOTS
     # ─────────────────────────────────────────────────────────────────────────
+
+    def plot_expression_umap(self, protein: str, **kwargs) -> go.Figure:
+        """UMAP coloured by a single protein's log-normalised expression."""
+        if not self.pp_state["umap_computed"]:
+            raise ValueError("Run run_umap() first.")
+        if protein not in self.adata.var_names:
+            raise ValueError(f"Protein '{protein}' not found in the dataset.")
+
+        layer_key = "log1p" if "log1p" in self.adata.layers else None
+        X = _to_dense(self.adata.layers[layer_key] if layer_key else self.adata.X)
+        prot_idx = list(self.adata.var_names).index(protein)
+        expr_vals = X[:, prot_idx]
+
+        df, cols = self._embedding_df("umap")
+        df["_expr"] = expr_vals
+
+        fig = px.scatter(
+            df, x=cols[0], y=cols[1], color="_expr",
+            hover_name="Cell", opacity=0.8,
+            color_continuous_scale="Viridis",
+            title=f"UMAP — {protein} expression",
+            labels={"_expr": "log(norm. intensity)"},
+            template=kwargs.get("template", "plotly_white"),
+        )
+        fig.update_traces(marker=dict(size=6))
+        fig.update_layout(height=600)
+        return fig
+
+    def get_protein_names(self) -> list:
+        """Return sorted list of protein names for selection UI."""
+        return sorted(self.adata.var_names.tolist())
 
     def plot_activity_umap(self, score_col: str, **kwargs) -> go.Figure:
         """UMAP coloured by a per-cell activity score (continuous colourscale)."""
