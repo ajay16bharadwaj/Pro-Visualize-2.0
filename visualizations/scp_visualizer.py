@@ -652,6 +652,20 @@ class SCPVisualizer:
 
         return computed
 
+    def _all_gene_symbols(self) -> list:
+        """Every gene symbol quantified in the dataset — the detected-protein
+        universe used as the statistical background for enrichment."""
+        _GENE_COL_CANDIDATES = ["Genes", "Gene.Names", "Gene names", "Gene", "gene_names"]
+        gene_col = next((c for c in _GENE_COL_CANDIDATES if c in self.adata.var.columns), None)
+        symbols: list[str] = []
+        source = self.adata.var[gene_col] if gene_col else self.adata.var_names
+        for raw in source:
+            for sym in str(raw).split(";"):
+                sym = sym.strip()
+                if sym and sym.lower() != "nan":
+                    symbols.append(sym)
+        return list(dict.fromkeys(symbols))
+
     def run_gsea_enrichment(
         self,
         de_group: str,
@@ -659,6 +673,7 @@ class SCPVisualizer:
         fc_thresh: float = 1.0,
         gene_sets: list = None,
         direction: str = "both",
+        background_genes: list | None = None,
     ) -> "pd.DataFrame":
         import gseapy as gp
 
@@ -733,10 +748,19 @@ class SCPVisualizer:
                 )
             )
 
+        # A custom background (the dataset's detected proteins) is the correct
+        # universe for enrichment; gseapy routes a list background through
+        # Enrichr's Speedrichr endpoint. None → Enrichr whole-genome default.
+        bg = None
+        if background_genes:
+            bg = [g for g in dict.fromkeys(background_genes) if g and g.lower() != "nan"]
+            logger.info("GSEA enrichment using custom background of %d detected genes.", len(bg))
+
         enr = gp.enrichr(
             gene_list=gene_list,
             gene_sets=gene_sets,
             organism="human",
+            background=bg,
             outdir=None,
             verbose=False,
         )
