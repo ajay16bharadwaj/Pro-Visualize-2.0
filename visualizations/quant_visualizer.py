@@ -100,6 +100,12 @@ class QuantificationVisualizer:
         all_protein_sets = self._get_protein_sets_by_group()
         sets_to_plot = {group: all_protein_sets.get(group, set()) for group in selected_groups}
 
+        if not any(sets_to_plot.values()):
+            raise ValueError(
+                "No proteins were detected in any of the selected groups, so there is "
+                "nothing to compare. Check the group selection and that the samples have data."
+            )
+
         fig, ax = plt.subplots(figsize=figsize)
         venn(sets_to_plot, ax=ax)
         if title:
@@ -113,6 +119,11 @@ class QuantificationVisualizer:
 
     def plot_upset(self, title: str = '', figsize: tuple = (4, 8), dpi: int = 150, **kwargs) -> BytesIO:
         protein_sets = self._get_protein_sets_by_group()
+        if not protein_sets or not any(protein_sets.values()):
+            raise ValueError(
+                "No proteins were detected in any experimental group, so there are no "
+                "intersections to plot. Check that the data and group column are correct."
+            )
         all_proteins = set.union(*protein_sets.values())
 
         memberships = []
@@ -452,7 +463,16 @@ class QuantificationVisualizer:
         numeric_df.replace(0, np.nan, inplace=True)
         numeric_df.dropna(axis=1, how='all', inplace=True)
         valid_samples = numeric_df.columns.tolist()
-        
+
+        if len(valid_samples) < 2:
+            raise ValueError(
+                f"Clustering/PCA needs at least 2 samples with data, but only "
+                f"{len(valid_samples)} remain after dropping empty samples. "
+                "Check the protein matrix and sample columns."
+            )
+        if numeric_df.dropna(how='all').empty:
+            raise ValueError("All protein intensities are missing — nothing to cluster.")
+
         imputer = SimpleImputer(strategy='mean')
         imputed_data = imputer.fit_transform(numeric_df)
         df_imputed = pd.DataFrame(imputed_data, columns=valid_samples, index=numeric_df.index)

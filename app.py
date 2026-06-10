@@ -13,7 +13,11 @@ from modules.quant_module import render as render_quant
 from modules.comparative_module import render as render_comp
 from modules.scp_module import render as render_scp
 from utils.helpers import safe_render
+from utils.logging_config import configure_logging
 from utils.report_builder import ReportBuilder
+
+# Configure root logging once so module-level loggers actually emit.
+configure_logging()
 
 # --- Page Configuration ---
 st.set_page_config(

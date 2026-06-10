@@ -28,12 +28,13 @@ from typing import Any, Callable
 
 import streamlit as st
 
+logger = logging.getLogger(__name__)
+
 try:
     from config.plot_configs import EXPORT_DEFAULTS
-except Exception:  # pragma: no cover — keeps import robust if config moves
+except Exception as e:  # keeps import robust if config moves
+    logger.warning(f"Could not import EXPORT_DEFAULTS from config.plot_configs; using built-in defaults: {e}")
     EXPORT_DEFAULTS = {"png_scale": 2, "html_plotlyjs": "cdn", "matplotlib_dpi": 150}
-
-logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +46,8 @@ def _params_hash(params: dict) -> str:
     """Stable short hash of plot params, used to invalidate stale edits."""
     try:
         s = json.dumps(params, sort_keys=True, default=str)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"params not JSON-serializable, falling back to repr for hash: {e}")
         s = repr(sorted(params.items(), key=lambda kv: str(kv[0])))
     return hashlib.md5(s.encode("utf-8")).hexdigest()[:12]
 
@@ -134,8 +136,8 @@ class PlotManager:
             if "marker_size" in edits:
                 try:
                     fig.update_traces(marker=dict(size=edits["marker_size"]))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Could not apply marker size for {self.key}: {e}")
         except Exception as e:
             logger.warning(f"Could not re-apply edits for {self.key}: {e}")
 
@@ -227,8 +229,8 @@ class PlotManager:
                 size_val = marker.get("size") if isinstance(marker, dict) else getattr(marker, "size", None)
                 if isinstance(size_val, (int, float)):
                     marker_size = int(size_val)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not read current layout values from figure: {e}")
 
         return {
             "title": title, "height": height, "xlabel": xlabel, "ylabel": ylabel,
