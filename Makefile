@@ -3,6 +3,11 @@
 VENV  = .venv/bin
 PORT ?= 8501
 
+# Prefer the local venv binaries when present (developer machine); fall back to
+# PATH so the same targets work in CI / Docker where there is no .venv.
+PYTEST := $(if $(wildcard $(VENV)/pytest),$(VENV)/pytest,pytest)
+RUFF   := $(if $(wildcard $(VENV)/ruff),$(VENV)/ruff,ruff)
+
 build:
 	docker compose build
 
@@ -17,10 +22,10 @@ logs:
 	docker compose logs -f
 
 test:
-	$(VENV)/pytest tests/ -q
+	$(PYTEST) tests/ -q
 
 lint:
-	$(VENV)/ruff check .
+	$(RUFF) check .
 
 clean:
 	docker compose down --rmi local -v --remove-orphans

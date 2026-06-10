@@ -1,0 +1,15 @@
+[tool.ruff]
+# Lint config for CI (.github/workflows/ci.yml) and `make lint`.
+line-length = 120
+target-version = "py311"
+exclude = [".venv", "__pycache__", ".git", "ASMS_poster"]
+
+[tool.ruff.lint]
+# Scope CI lint to bug-catching rules, not cosmetics. "F" = pyflakes
+# (unused imports/vars, undefined names, bad f-strings); "E9" = syntax /
+# IO errors. Whitespace and line-length (W/E5/E7) are intentionally left
+# out — they add noise without catching defects in a plotting-heavy codebase.
+select = ["F", "E9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

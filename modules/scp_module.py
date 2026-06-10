@@ -16,17 +16,14 @@ Tab layout:
                          per-score summary stats
 """
 
-import io
 import pickle
 import streamlit as st
 import pandas as pd
-import numpy as np
 import logging
 import plotly.express as px
 from plotly import colors as pc
 
 from visualizations.scp_visualizer import SCPVisualizer
-from utils.helpers import handle_plotting_errors
 from utils.plot_manager import PlotManager, MplPlotManager
 
 logger = logging.getLogger(__name__)
@@ -747,7 +744,6 @@ class SCPTab:
             st.info("Configure and run DE analysis above.")
             return
 
-        de_all = viz.get_de_results()
         de_groups_avail = viz.get_de_groups()
 
         sel_group = st.selectbox(

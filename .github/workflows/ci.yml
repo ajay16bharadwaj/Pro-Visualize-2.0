@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, "feature/**"]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    name: Lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Run tests
+        run: pytest tests/ -q
+
+  docker:
+    name: Docker build & import smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t pro-visualize:ci .
+
+      # Confirm the heavy/native deps load inside the built image and the app
+      # parses — catches dependency or kaleido/Chromium breakage that a pure
+      # pip install would miss. We import the visualizers (no import-time side
+      # effects) and byte-compile app.py rather than importing it, since app.py
+      # executes Streamlit UI calls at module load.
+      - name: Import smoke test
+        run: |
+          docker run --rm pro-visualize:ci python -c "import streamlit, scanpy, anndata, kaleido, harmonypy, gseapy; import visualizations.scp_visualizer, visualizations.comparative_visualizer, visualizations.quant_visualizer, visualizations.dilution_series; print('imports OK')"
+          docker run --rm pro-visualize:ci python -m py_compile app.py
+
+      - name: Assert container runs as non-root
+        run: |
+          USER_IN_IMAGE=$(docker run --rm pro-visualize:ci whoami)
+          echo "container user: $USER_IN_IMAGE"
+          test "$USER_IN_IMAGE" = "appuser"
+
+      # kaleido is the most fragile deploy dependency: its bundled Chromium needs
+      # the system libs installed in the Dockerfile. Render a PNG to prove they load.
+      - name: Assert kaleido PNG export works
+        run: |
+          docker run --rm pro-visualize:ci python -c "import plotly.graph_objects as go; png = go.Figure().to_image(format='png'); assert png[:8] == b'\x89PNG\r\n\x1a\n', 'not a PNG'; print('kaleido PNG export OK', len(png), 'bytes')"

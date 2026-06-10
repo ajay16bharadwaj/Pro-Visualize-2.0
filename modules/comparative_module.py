@@ -4,7 +4,6 @@ import logging
 import plotly.express as px
 from plotly import colors as pc
 from visualizations.comparative_visualizer import ComparativeVisualizer
-from utils.helpers import handle_plotting_errors
 from utils.plot_manager import PlotManager, MplPlotManager
 from config.plot_configs import SIGNIFICANCE_PRESETS
 
