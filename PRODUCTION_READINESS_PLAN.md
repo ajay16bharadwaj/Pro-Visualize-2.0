@@ -22,6 +22,7 @@
 | P5 — QC (DIA) | ☑ Done | PR #6 merged → main (sync'd to develop); `v2.0.0-p5` tagged | `feature/p5-qc` |
 | P6 — SCP Polish | ☑ Done | PR #7 merged → develop; `v2.0.0-p6` tagged | `feature/p6-scp-polish` |
 | P7 — Deploy-Ready | ⏳ PR open | PR #8 → develop; `v2.0.0` tag on release | `feature/p7-deploy-ready` |
+| P8 — Publication Hardening | ⏳ PR pending | umbrella → develop; `v2.0.1` on release | `feature/p8-publication-hardening` (subs: p8a–p8d) |
 
 ### What's done in P2 (Comparative module upgrade)
 
@@ -92,6 +93,49 @@
 2. Smoke test: `pytest tests/ -q` passes (50/50)
 3. Merge PR → develop, tag `v2.0.0-p7`
 4. Merge `develop` → `main`, tag `v2.0.0`
+
+### What's done in P8 (Publication Hardening — pre-paper audit)
+
+Branch `feature/p8-publication-hardening`, cut from `feature/p7-deploy-ready`
+(P7 was not yet on `develop`, so the Docker/tests work being hardened lived
+only on the P7 branch). Four reviewable sub-checkpoints, each merged `--no-ff`:
+
+- **P8a — Reproducible build** (`feature/p8a-repro-deploy`, commit `97035f7`):
+  pinned all loose deps to exact versions (scanpy 1.11.5, anndata 0.12.11,
+  gseapy 1.2.1, igraph 1.0.0, leidenalg 0.11.0, jinja2 3.1.6); enabled
+  harmonypy 2.0.0 (guarded import). New `requirements-dev.txt`
+  (pytest 9.0.3, ruff 0.15.16). Dockerfile pinned to `python:3.11.15-slim`,
+  non-root `appuser`, full kaleido/Chromium libs. New `.github/workflows/ci.yml`
+  (lint + pytest; docker build asserting non-root + kaleido PNG export).
+  `pyproject.toml` ruff config (F + E9). Makefile test/lint targets made
+  CI-safe. Lint hygiene + `.DS_Store` gitignore.
+- **P8b — Enrichment background toggle** (`feature/p8b-enrichment-background`,
+  commit `bed7f14`): the one scientific-correctness fix. Enrichment can now use
+  the study's **detected proteins** as the statistical background (default)
+  instead of the whole genome, via Enrichr Speedrichr endpoints (comparative)
+  and gseapy `background=` (SCP); whole-genome remains an explicit option.
+  UI selector + background-N caption in both modules. Network-mocked tests.
+- **P8c — Robustness polish** (`feature/p8c-robustness-polish`, commit
+  `e93dc94`): new `utils/logging_config.py` (root logging, called from
+  `app.py`); replaced silent `except: pass` in `plot_manager.py` with logging;
+  empty/degenerate-data guards on Venn/UpSet/clustering. Audit note: error
+  isolation was already comprehensive (PlotManager try/except + QC tab-method
+  decorators + tab-level `safe_render`), so blanket-decorating was unnecessary.
+- **P8d — Reproducibility report** (`feature/p8d-repro-report`, commit
+  `9a62e25`): report exports now embed a Methods & Reproducibility block
+  (app/git/python/package versions); ZIP gains `provenance.json` and nests
+  params under `parameters.json`; `add_figure` guards non-serializable params.
+- **P8 (umbrella) — Methods doc**: `METHODS.md` with ready-to-paste language
+  for the paper (statistics, transformation/imputation, LOD/LOQ, SCP, QC,
+  enrichment background).
+
+Test suite grew 50 → 60; `ruff check .` clean. Docker-level gates (build,
+non-root, kaleido PNG) are exercised by CI (local docker daemon was down).
+
+**P8 release steps:**
+1. Open PR: `feature/p8-publication-hardening` → `develop` (after P7 merges).
+2. Confirm CI green (lint + pytest 60/60 + docker build/import/PNG).
+3. Merge → develop; merge `develop` → `main`; tag `v2.0.1`.
 
 ### Environment notes (critical for resumption)
 
