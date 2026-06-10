@@ -23,13 +23,15 @@ def load_dia_visualizer(filepath: str) -> DiaQcVisualizer:
 
 
 @st.cache_data(show_spinner="Running pathway enrichment analysis (this may take a moment)...")
-def run_cached_enrichment(_visualizer: ComparativeVisualizer, gene_list: list, organism: str):
+def run_cached_enrichment(_visualizer: ComparativeVisualizer, gene_list: list, organism: str,
+                          background_genes: list | None = None):
     """
     Cached wrapper for the Enrichr API call to avoid re-running it.
     The `_visualizer` parameter has an underscore to tell Streamlit's caching
     mechanism not to hash the object itself, but to treat it as a stable component.
+    `background_genes` IS hashed, so switching background mode invalidates the cache.
     """
-    return _visualizer.run_enrichment_analysis(gene_list, organism)
+    return _visualizer.run_enrichment_analysis(gene_list, organism, background_genes=background_genes)
 
 # NOTE: SCPVisualizer is intentionally NOT cached via @st.cache_data because it
 # is mutated in-place through the preprocessing pipeline (normalization, regression,

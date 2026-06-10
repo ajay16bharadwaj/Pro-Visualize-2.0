@@ -12,6 +12,8 @@ import base64
 import io
 import json
 import logging
+import platform
+import subprocess
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,13 +24,66 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+_REPO_ROOT = Path(__file__).parent.parent
+
+# Packages whose versions matter for reproducing an analysis. Captured into
+# the report's Methods & Reproducibility section.
+_PROVENANCE_PACKAGES = [
+    "streamlit", "pandas", "numpy", "scipy", "scikit-learn", "plotly",
+    "scanpy", "anndata", "gseapy", "gprofiler-official", "umap-learn",
+]
+
+
+def _git_commit() -> str | None:
+    """Best-effort short git commit of the running code; None if unavailable."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(_REPO_ROOT), capture_output=True, text=True, timeout=3,
+        )
+        return out.stdout.strip() or None if out.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _package_versions() -> dict[str, str]:
+    from importlib.metadata import PackageNotFoundError, version
+    versions: dict[str, str] = {}
+    for pkg in _PROVENANCE_PACKAGES:
+        try:
+            versions[pkg] = version(pkg)
+        except PackageNotFoundError:
+            continue
+    return versions
 
 
 class ReportBuilder:
     """Per-session report state, lives in st.session_state['report']."""
 
+    APP_VERSION = "Pro-Visualize 2.0"
+
     def __init__(self):
         self.items: list[dict] = []
+
+    # ------------------------------------------------------------------
+    # Provenance
+    # ------------------------------------------------------------------
+
+    def provenance(self) -> dict:
+        """Analysis-provenance block for the report's Methods section.
+
+        Captures app version, git commit, timestamp, Python and key package
+        versions so a reader can reproduce the environment that produced the
+        figures.
+        """
+        return {
+            "app_version": self.APP_VERSION,
+            "git_commit": _git_commit(),
+            "generated_at": datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "python_version": platform.python_version(),
+            "platform": platform.platform(),
+            "packages": _package_versions(),
+        }
 
     # ------------------------------------------------------------------
     # Mutation API
@@ -51,7 +106,7 @@ class ReportBuilder:
             "kind": kind,
             "fig": fig,
             "title": title,
-            "params": params,
+            "params": self._safe_params(key, params),
             "notes": notes,
             "added_at": datetime.now(tz=timezone.utc).isoformat(),
         }
@@ -60,6 +115,28 @@ class ReportBuilder:
                 self.items[i] = item
                 return
         self.items.append(item)
+
+    @staticmethod
+    def _safe_params(key: str, params: dict | None) -> dict:
+        """Keep only JSON-serializable params so exports never crash later.
+
+        Each value is coerced with json.dumps(default=str); a value that still
+        fails is dropped with a warning. This fails soft at queue time rather
+        than blowing up HTML/ZIP export after a long analysis session.
+        """
+        if not params:
+            return {}
+        if not isinstance(params, dict):
+            logger.warning("Report params for %s is not a dict (%s); ignoring.", key, type(params))
+            return {}
+        clean: dict = {}
+        for k, v in params.items():
+            try:
+                json.dumps(v, default=str)
+                clean[str(k)] = v
+            except Exception as e:
+                logger.warning("Dropping non-serializable report param %r for %s: %s", k, key, e)
+        return clean
 
     def add_table(self, module: str, key: str, df: Any, caption: str) -> None:
         """Queue a DataFrame for the report."""
@@ -241,10 +318,12 @@ class ReportBuilder:
 
             rendered_items.append(entry)
 
+        prov = self.provenance()
         html_str = template.render(
             items=rendered_items,
-            generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-            app_version="Pro-Visualize 2.0",
+            generated_at=prov["generated_at"],
+            app_version=self.APP_VERSION,
+            provenance=prov,
         )
         return html_str.encode("utf-8")
 
@@ -299,9 +378,15 @@ class ReportBuilder:
                     except Exception as e:
                         logger.warning(f"Mpl PNG export failed for {slug}: {e}")
 
+            prov = self.provenance()
             zf.writestr(
                 "parameters.json",
-                json.dumps(all_params, indent=2, default=str).encode("utf-8"),
+                json.dumps({"_provenance": prov, "figures": all_params},
+                           indent=2, default=str).encode("utf-8"),
+            )
+            zf.writestr(
+                "provenance.json",
+                json.dumps(prov, indent=2, default=str).encode("utf-8"),
             )
             notes_md = "\n".join(notes_lines) if notes_lines else ""
             zf.writestr("notes.md", notes_md.encode("utf-8"))

@@ -16,17 +16,14 @@ Tab layout:
                          per-score summary stats
 """
 
-import io
 import pickle
 import streamlit as st
 import pandas as pd
-import numpy as np
 import logging
 import plotly.express as px
 from plotly import colors as pc
 
 from visualizations.scp_visualizer import SCPVisualizer
-from utils.helpers import handle_plotting_errors
 from utils.plot_manager import PlotManager, MplPlotManager
 
 logger = logging.getLogger(__name__)
@@ -747,7 +744,6 @@ class SCPTab:
             st.info("Configure and run DE analysis above.")
             return
 
-        de_all = viz.get_de_results()
         de_groups_avail = viz.get_de_groups()
 
         sel_group = st.selectbox(
@@ -878,6 +874,20 @@ class SCPTab:
                     key="scp_enr_dbs",
                 )
 
+                enr_bg_mode = st.radio(
+                    "Statistical background",
+                    ["Detected proteins (recommended)", "Whole genome (Enrichr default)"],
+                    index=0,
+                    horizontal=True,
+                    key="scp_enr_bg_mode",
+                    help="Test enriched terms against the proteins detected in this dataset rather "
+                         "than the whole genome — avoids inflating terms built from genes never "
+                         "observed in single-cell proteomics (which has limited proteome depth).",
+                )
+                enr_use_detected_bg = enr_bg_mode.startswith("Detected")
+                if enr_use_detected_bg:
+                    st.caption(f"Background = {len(viz._all_gene_symbols())} detected genes.")
+
                 # Show live preview of proteins that will pass the current filters
                 _de_preview = viz.get_de_results(enr_group)
                 if not _de_preview.empty:
@@ -920,6 +930,7 @@ class SCPTab:
                                 fc_thresh=enr_fc,
                                 gene_sets=enr_dbs,
                                 direction=enr_dir,
+                                background_genes=viz._all_gene_symbols() if enr_use_detected_bg else None,
                             )
                             st.session_state.scp_enr_results = enr_df
                             if enr_df.empty:

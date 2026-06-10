@@ -2,7 +2,6 @@ import json
 import zipfile
 from io import BytesIO
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import pytest
@@ -91,3 +90,50 @@ def test_empty_builder_export(builder):
     assert isinstance(html, bytes)
     z = builder.export_zip()
     assert isinstance(z, bytes)
+
+
+# --- Reproducibility provenance (C4) -----------------------------------------
+
+def test_provenance_has_versions(builder):
+    prov = builder.provenance()
+    assert prov["app_version"] == ReportBuilder.APP_VERSION
+    assert "python_version" in prov
+    # at least the core packages are resolvable in the test env
+    assert "pandas" in prov["packages"]
+    assert "streamlit" in prov["packages"]
+
+
+def test_html_contains_methods_section(builder):
+    builder.add_figure("quant", "pca", _make_fig(), "PCA Plot", {})
+    html = builder.export_html().decode("utf-8")
+    assert "Methods &amp; Reproducibility" in html or "Methods & Reproducibility" in html
+    assert "pandas" in html  # a package version row is rendered
+
+
+def test_zip_contains_provenance(builder):
+    builder.add_figure("quant", "pca", _make_fig(), "PCA", {"param": 1})
+    with zipfile.ZipFile(BytesIO(builder.export_zip())) as zf:
+        assert "provenance.json" in zf.namelist()
+        prov = json.loads(zf.read("provenance.json"))
+        assert "packages" in prov and "python_version" in prov
+        params = json.loads(zf.read("parameters.json"))
+        assert "_provenance" in params and "figures" in params
+
+
+def test_add_figure_drops_non_serializable_params(builder):
+    # A circular reference cannot be serialized even with default=str, so it is
+    # the realistic "unserializable" case the guard protects export from.
+    circular: dict = {}
+    circular["self"] = circular
+
+    builder.add_figure("quant", "pca", _make_fig(), "PCA",
+                       {"good": 2, "bad": circular})
+    stored = builder.items[0]["params"]
+    assert stored == {"good": 2}  # the bad param was dropped, not crashed on
+    # ...and export still succeeds.
+    assert isinstance(builder.export_zip(), bytes)
+
+
+def test_add_figure_non_dict_params(builder):
+    builder.add_figure("quant", "pca", _make_fig(), "PCA", params=["not", "a", "dict"])
+    assert builder.items[0]["params"] == {}

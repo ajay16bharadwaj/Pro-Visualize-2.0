@@ -1,7 +1,6 @@
 import streamlit as st
 import logging
 from tempfile import NamedTemporaryFile
-from visualizations.DiaQcVisualizer import DiaQcVisualizer
 from utils.helpers import handle_plotting_errors
 from utils.caching import load_dia_visualizer
 from utils.plot_manager import PlotManager

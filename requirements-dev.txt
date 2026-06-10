@@ -1,0 +1,6 @@
+# Development / CI dependencies for Pro-Visualize 2.0.
+# Install alongside the runtime deps:  pip install -r requirements.txt -r requirements-dev.txt
+# Pinned to the versions exercised by the test + lint pipeline (.github/workflows/ci.yml).
+
+pytest==9.0.3
+ruff==0.15.16

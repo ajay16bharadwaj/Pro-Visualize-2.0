@@ -72,3 +72,73 @@ def test_plot_comparative_heatmap(comp_data, viz):
     # returns BytesIO
     assert result is not None
     assert hasattr(result, "read")
+
+
+# --- Enrichment background toggle (network mocked) ---------------------------
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def _enrichr_row(term, pval, adj):
+    # [rank, term, p_value, z, combined, [genes], adj_p_value, ...]
+    return [1, term, pval, 0.0, 0.0, ["GENEA", "GENEB"], adj]
+
+
+class _FakeSession:
+    """Routes Enrichr/Speedrichr calls to canned data. Classic GETs return a
+    distinct p-value from the background POSTs so the two modes are
+    distinguishable. Records the background list it was given."""
+
+    def __init__(self):
+        self.background_seen = None
+
+    def _lib_from(self, url, data):
+        if data and "backgroundType" in data:
+            return data["backgroundType"]
+        return url.split("backgroundType=")[-1]
+
+    def post(self, url, files=None, data=None, timeout=None):
+        if url.endswith("/addList"):
+            return _FakeResponse({"userListId": 42})
+        if url.endswith("/addbackground"):
+            self.background_seen = data["background"]
+            return _FakeResponse({"backgroundid": "bg-1"})
+        if url.endswith("/backgroundenrich"):
+            lib = self._lib_from(url, data)
+            return _FakeResponse({lib: [_enrichr_row("Pathway X", 0.04, 0.20)]})
+        raise AssertionError(f"unexpected POST {url}")
+
+    def get(self, url, timeout=None):
+        lib = self._lib_from(url, None)
+        return _FakeResponse({lib: [_enrichr_row("Pathway X", 0.01, 0.05)]})
+
+
+def test_enrichment_whole_genome_mode(viz, monkeypatch):
+    session = _FakeSession()
+    monkeypatch.setattr(viz, "_enrichr_session", lambda: session)
+    df = viz.run_enrichment_analysis(["GENEA", "GENEB"], organism="human")
+    assert not df.empty
+    assert session.background_seen is None  # classic path: no background posted
+    assert (df["p_value"] == 0.01).all()
+
+
+def test_enrichment_detected_background_mode(comp_data, viz, monkeypatch):
+    session = _FakeSession()
+    monkeypatch.setattr(viz, "_enrichr_session", lambda: session)
+    background = comp_data[0]["Gene Name"].tolist()
+    df = viz.run_enrichment_analysis(["GENEA", "GENEB"], organism="human",
+                                     background_genes=background)
+    assert not df.empty
+    # The custom background was actually posted to Speedrichr...
+    assert session.background_seen is not None
+    assert set(session.background_seen.split("\n")) == set(background)
+    # ...and the background-corrected p-values differ from whole-genome mode.
+    assert (df["p_value"] == 0.04).all()
