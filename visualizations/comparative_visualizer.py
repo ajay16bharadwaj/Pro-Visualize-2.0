@@ -352,40 +352,97 @@ class ComparativeVisualizer:
 
         return fig
 
-    def run_enrichment_analysis(self, gene_list: list, organism: str = "human"):
+    # Enrichr endpoints. The classic endpoint always tests against Enrichr's
+    # fixed whole-genome background; the Speedrichr endpoint lets us supply the
+    # study's own detected proteins as the statistical background (the correct
+    # universe for proteomics enrichment). Both return the same result shape.
+    _ENRICHR_URL = 'https://maayanlab.cloud/Enrichr'
+    _SPEEDRICHR_URL = 'https://maayanlab.cloud/speedrichr/api'
+
+    _ORGANISM_LIBRARIES = {
+        "human": ['GO_Biological_Process_2023', 'GO_Cellular_Component_2023', 'GO_Molecular_Function_2023', 'KEGG_2021_Human', 'Reactome_2022'],
+        "mouse": ['GO_Biological_Process_2023', 'GO_Cellular_Component_2023', 'GO_Molecular_Function_2023', 'KEGG_2019_Mouse', 'Reactome_2022'],
+    }
+    _SOURCE_MAPPING = {
+        'GO_Biological_Process_2023': 'GO:BP', 'GO_Cellular_Component_2023': 'GO:CC',
+        'GO_Molecular_Function_2023': 'GO:MF', 'KEGG_2021_Human': 'KEGG',
+        'KEGG_2019_Mouse': 'KEGG', 'Reactome_2022': 'REAC'
+    }
+
+    @staticmethod
+    def _enrichr_session():
+        _retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
+        session = requests.Session()
+        session.mount("https://", HTTPAdapter(max_retries=_retry))
+        session.mount("http://", HTTPAdapter(max_retries=_retry))
+        return session
+
+    @classmethod
+    def _parse_enrichr_records(cls, data, library):
+        """Turn one library's raw Enrichr result rows into result dicts.
+
+        Each row is [rank, term, p_value, z_score, combined_score,
+        overlapping_genes, adjusted_p_value, ...] — identical for the classic
+        /enrich and the Speedrichr /backgroundenrich endpoints.
         """
-        Perform comprehensive enrichment analysis for a list of genes using Enrichr.
+        records = []
+        for result in data:
+            records.append({
+                'source': cls._SOURCE_MAPPING.get(library, library),
+                'name': result[1],
+                'p_value': float(result[2]),
+                'adj_p_value': float(result[6]),
+                'genes': ";".join(result[5]),
+                'intersection_size': len(result[5]),
+            })
+        return records
+
+    def run_enrichment_analysis(self, gene_list: list, organism: str = "human",
+                                background_genes: list | None = None):
+        """Run pathway enrichment for `gene_list` via Enrichr.
+
+        background_genes:
+            - None  → Enrichr's default whole-genome background (classic endpoint).
+            - list  → the study's detected proteins, used as a custom statistical
+                      background via Speedrichr. This is the scientifically
+                      correct universe for proteomics (avoids bias toward
+                      well-annotated genes never observed in the experiment).
         """
-        logger.info(f"Running Enrichr analysis for {len(gene_list)} genes on organism '{organism}'...")
         if not gene_list:
             raise ValueError("Gene list for enrichment analysis cannot be empty.")
-
-        organism_libraries = {
-            "human": ['GO_Biological_Process_2023', 'GO_Cellular_Component_2023', 'GO_Molecular_Function_2023', 'KEGG_2021_Human', 'Reactome_2022'],
-            "mouse": ['GO_Biological_Process_2023', 'GO_Cellular_Component_2023', 'GO_Molecular_Function_2023', 'KEGG_2019_Mouse', 'Reactome_2022'],
-        }
-        source_mapping = {
-            'GO_Biological_Process_2023': 'GO:BP', 'GO_Cellular_Component_2023': 'GO:CC',
-            'GO_Molecular_Function_2023': 'GO:MF', 'KEGG_2021_Human': 'KEGG',
-            'KEGG_2019_Mouse': 'KEGG', 'Reactome_2022': 'REAC'
-        }
-
-        if organism.lower() not in organism_libraries:
+        if organism.lower() not in self._ORGANISM_LIBRARIES:
             raise ValueError(f"Organism '{organism}' is not supported by this function.")
 
-        ENRICHR_URL = 'https://maayanlab.cloud/Enrichr'
+        use_bg = bool(background_genes)
+        logger.info(
+            "Running Enrichr analysis for %d genes on '%s' (background: %s).",
+            len(gene_list), organism,
+            f"{len(background_genes)} detected proteins" if use_bg else "whole genome",
+        )
+
+        libraries = self._ORGANISM_LIBRARIES[organism.lower()]
+        session = self._enrichr_session()
+
+        if use_bg:
+            all_results = self._enrich_with_background(session, gene_list, background_genes, libraries)
+        else:
+            all_results = self._enrich_classic(session, gene_list, libraries)
+
+        if not all_results:
+            return pd.DataFrame()
+
+        results_df = pd.DataFrame(all_results).sort_values('p_value').reset_index(drop=True)
+        results_df['-log10(p)'] = -np.log10(results_df['p_value'])
+        return results_df
+
+    def _enrich_classic(self, session, gene_list, libraries):
+        """Whole-genome background (classic Enrichr /enrich endpoint)."""
         genes_str = '\n'.join(gene_list)
         payload = {'list': (None, genes_str), 'description': (None, 'Pro-Visualize Analysis')}
-
-        _retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
-        _session = requests.Session()
-        _session.mount("https://", HTTPAdapter(max_retries=_retry))
-        _session.mount("http://", HTTPAdapter(max_retries=_retry))
-
         try:
-            response = _session.post(f'{ENRICHR_URL}/addList', files=payload, timeout=30)
-            response.raise_for_status()
-            user_list_id = response.json()['userListId']
+            resp = session.post(f'{self._ENRICHR_URL}/addList', files=payload, timeout=30)
+            resp.raise_for_status()
+            user_list_id = resp.json()['userListId']
         except requests.exceptions.RequestException as e:
             raise RuntimeError(
                 "Enrichr API may be down — try again or use the offline gene-list export. "
@@ -393,32 +450,63 @@ class ComparativeVisualizer:
             )
 
         all_results = []
-        for library in organism_libraries[organism.lower()]:
+        for library in libraries:
             time.sleep(0.5)
             try:
-                query_url = f'{ENRICHR_URL}/enrich?userListId={user_list_id}&backgroundType={library}'
-                response = _session.get(query_url, timeout=30)
-                response.raise_for_status()
-                data = response.json().get(library, [])
-                
-                for result in data:
-                    all_results.append({
-                        'source': source_mapping.get(library, library),
-                        'name': result[1],
-                        'p_value': float(result[2]),
-                        'adj_p_value': float(result[6]),
-                        'genes': ";".join(result[5]),
-                        'intersection_size': len(result[5])
-                    })
+                # NOTE: in the classic endpoint `backgroundType` is Enrichr's
+                # own (misleading) name for the gene-set library to query.
+                query_url = f'{self._ENRICHR_URL}/enrich?userListId={user_list_id}&backgroundType={library}'
+                resp = session.get(query_url, timeout=30)
+                resp.raise_for_status()
+                all_results.extend(self._parse_enrichr_records(resp.json().get(library, []), library))
             except requests.exceptions.RequestException as e:
                 logger.warning(f"Could not retrieve results from Enrichr library {library}: {e}")
-        
-        if not all_results:
-            return pd.DataFrame()
+        return all_results
 
-        results_df = pd.DataFrame(all_results).sort_values('p_value').reset_index(drop=True)
-        results_df['-log10(p)'] = -np.log10(results_df['p_value'])
-        return results_df
+    def _enrich_with_background(self, session, gene_list, background_genes, libraries):
+        """Custom background = detected proteins (Speedrichr endpoints)."""
+        genes_str = '\n'.join(gene_list)
+        bg_str = '\n'.join(dict.fromkeys(g for g in background_genes if g))  # dedup, drop blanks
+        try:
+            resp = session.post(
+                f'{self._SPEEDRICHR_URL}/addList',
+                files={'list': (None, genes_str), 'description': (None, 'Pro-Visualize Analysis')},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            user_list_id = resp.json()['userListId']
+
+            resp = session.post(
+                f'{self._SPEEDRICHR_URL}/addbackground',
+                data={'background': bg_str},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            background_id = resp.json()['backgroundid']
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(
+                "Enrichr (Speedrichr) background API may be down — try again, switch to the "
+                f"whole-genome background, or use the offline gene-list export. (Network error: {e})"
+            )
+
+        all_results = []
+        for library in libraries:
+            time.sleep(0.5)
+            try:
+                resp = session.post(
+                    f'{self._SPEEDRICHR_URL}/backgroundenrich',
+                    data={
+                        'userListId': user_list_id,
+                        'backgroundid': background_id,
+                        'backgroundType': library,
+                    },
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                all_results.extend(self._parse_enrichr_records(resp.json().get(library, []), library))
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Could not retrieve background-corrected results for {library}: {e}")
+        return all_results
 
     @handle_plotting_errors
     def plot_enrichment_manhattan(self, enrichment_df: pd.DataFrame, **kwargs):

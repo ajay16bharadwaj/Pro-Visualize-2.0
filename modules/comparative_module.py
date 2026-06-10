@@ -294,11 +294,39 @@ class ComparativeTab:
 
                         organism = st.selectbox("Select organism:", ["human", "mouse"])
 
+                        bg_mode = st.radio(
+                            "Statistical background",
+                            ["Detected proteins (recommended)", "Whole genome (Enrichr default)"],
+                            index=0,
+                            horizontal=True,
+                            key="comp_enrich_bg_mode",
+                            help="Enrichment p-values depend on the background universe. Testing against "
+                                 "the proteins you actually detected — rather than the whole genome — "
+                                 "avoids inflating terms made of genes that were never observed in your "
+                                 "experiment. Whole genome reproduces the classic Enrichr default.",
+                        )
+
+                        # Detected-protein universe = every gene quantified in the uploaded matrix.
+                        detected_bg = (
+                            visualizer.protein_df['Gene Name'].dropna().astype(str).unique().tolist()
+                            if 'Gene Name' in visualizer.protein_df.columns else []
+                        )
+                        use_detected_bg = bg_mode.startswith("Detected")
+                        if use_detected_bg and not detected_bg:
+                            st.warning(
+                                "No 'Gene Name' column found in the protein matrix — falling back to "
+                                "the whole-genome background. Add gene symbols to use a custom background."
+                            )
+                        if use_detected_bg and detected_bg:
+                            st.caption(f"Background = {len(detected_bg)} detected proteins.")
+
                         if st.button("Run Analysis", type="primary", key="comp_run_pathway_btn"):
                             from utils.caching import run_cached_enrichment
                             if genes:
+                                background = detected_bg if (use_detected_bg and detected_bg) else None
                                 try:
-                                    st.session_state.enrichment_results = run_cached_enrichment(visualizer, genes, organism)
+                                    st.session_state.enrichment_results = run_cached_enrichment(
+                                        visualizer, genes, organism, background_genes=background)
                                 except RuntimeError as _re:
                                     st.error(f"⚠️ {_re}")
                                 except Exception as _ex:
