@@ -62,3 +62,35 @@ def test_plot_cv_vs_intensity(viz):
 def test_plot_protein_rank_order(viz):
     fig = viz.plot_protein_rank_order()
     assert fig is not None
+
+
+# --- Empty / degenerate-data guards (C3 robustness) --------------------------
+
+@pytest.fixture
+def empty_viz():
+    """A visualizer whose intensity matrix is entirely missing."""
+    samples = ["S1", "S2", "S3", "S4"]
+    annotation_df = pd.DataFrame({
+        "Level3": samples,
+        "attribute_ExperimentalGroup": ["A", "A", "B", "B"],
+    })
+    proteins = [f"P{i}" for i in range(10)]
+    data = {"Protein": proteins}
+    for s in samples:
+        data[s] = [np.nan] * len(proteins)
+    return QuantificationVisualizer(pd.DataFrame(data), annotation_df)
+
+
+def test_clustering_guard_on_empty_data(empty_viz):
+    with pytest.raises(ValueError):
+        empty_viz._prepare_data_for_clustering()
+
+
+def test_upset_guard_on_empty_data(empty_viz):
+    with pytest.raises(ValueError, match="no intersections|No proteins"):
+        empty_viz.plot_upset()
+
+
+def test_venn_guard_on_empty_data(empty_viz):
+    with pytest.raises(ValueError, match="No proteins"):
+        empty_viz.plot_venn_diagram(selected_groups=["A", "B"])
