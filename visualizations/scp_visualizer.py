@@ -29,13 +29,11 @@ import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from sklearn.preprocessing import StandardScaler
-from sklearn.impute import SimpleImputer
 from scipy.sparse import issparse
 
 try:
     import scanpy as sc
-    import anndata as ad
+    import anndata as ad  # noqa: F401 — availability probe; sets SCANPY_AVAILABLE
     SCANPY_AVAILABLE = True
 except ImportError:
     SCANPY_AVAILABLE = False
@@ -47,7 +45,7 @@ except ImportError:
     HARMONY_AVAILABLE = False
 
 try:
-    import gseapy as gp
+    import gseapy as gp  # noqa: F401 — availability probe; sets GSEAPY_AVAILABLE
     GSEAPY_AVAILABLE = True
 except ImportError:
     GSEAPY_AVAILABLE = False

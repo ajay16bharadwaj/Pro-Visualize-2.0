@@ -127,7 +127,7 @@ class ComparativeVisualizer:
         """
         Generates a volcano plot with customizable arrows and themes.
         """
-        logger.info(f"Generating volcano plot...")
+        logger.info("Generating volcano plot...")
         
         # Default arrow config
         if arrow_config is None:

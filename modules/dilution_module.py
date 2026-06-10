@@ -31,9 +31,10 @@ class DilutionSeriesTab:
                 "Upload Metadata File (.csv, .tsv)", type=['csv', 'tsv'],
                 key="dilution_metadata_uploader")
 
-            with st.expander("⚙️ Column Configuration", expanded=False):
-                st.caption("Map your file's column names to the roles this module expects. "
-                           "Leave defaults if your files already use these names.")
+            st.markdown("**⚙️ Column Configuration**")
+            st.caption("Map your file's column names to the roles this module expects. "
+                       "Leave defaults if your files already use these names.")
+            with st.container():
                 c1, c2 = st.columns(2)
                 protein_id_col = c1.text_input("Protein ID Column", value="Protein.Group",
                                                key="dil_col_protein_id")
@@ -456,7 +457,6 @@ class DilutionSeriesTab:
                 if 'dilution_lod_df' in st.session_state:
                     lod_df = st.session_state['dilution_lod_df']
                     valid_count = lod_df['LOD (ng)'].notna().sum()
-                    min_conc = visualizer.metadata_df['Concentration'].min()
                     in_range_count = lod_df['LOD in range'].sum()
                     st.caption(f"{valid_count} of {len(lod_df)} proteins have valid LOD estimates | "
                                f"{in_range_count} have LOD within the tested concentration range "

@@ -215,3 +215,6 @@ literature_index/
 # Sample data for single-cell module
 sample_single_cell/
 
+
+# macOS Finder metadata
+.DS_Store

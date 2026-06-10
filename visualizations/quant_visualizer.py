@@ -366,7 +366,7 @@ class QuantificationVisualizer:
         Generates a protein rank order plot. 
         Supports custom arrow config via arrow_config dict.
         """
-        logger.info(f"Generating protein rank order plot...")
+        logger.info("Generating protein rank order plot...")
         
         # Default arrow configuration
         if arrow_config is None:
