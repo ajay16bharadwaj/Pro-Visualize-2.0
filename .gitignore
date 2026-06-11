@@ -218,3 +218,8 @@ sample_single_cell/
 
 # macOS Finder metadata
 .DS_Store
+
+# Internal working docs — kept locally, not published to the public repo
+HANDOVER_*.md
+SESSION_LOG_*.md
+PRODUCTION_READINESS_PLAN.md
